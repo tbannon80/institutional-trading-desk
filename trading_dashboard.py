@@ -9,6 +9,7 @@ import requests
 import json
 import os
 import urllib.request
+import streamlit.components.v1 as components
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -21,7 +22,6 @@ st.set_page_config(
 # --- High-Contrast Adaptive Theme Scaffolding ---
 st.markdown("""
 <style>
-    /* Clean metric card containers */
     .metric-card {
         background: rgba(128, 128, 128, 0.08);
         border: 1px solid rgba(128, 128, 128, 0.2);
@@ -47,8 +47,6 @@ st.markdown("""
         color: #00bcd4;
         margin-top: 2px;
     }
-
-    /* Side panel analytics cards */
     .side-card {
         background: rgba(128, 128, 128, 0.08);
         border: 1px solid rgba(128, 128, 128, 0.2);
@@ -90,7 +88,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- Secrets Management ---
+# --- Secrets Helper ---
 def get_secret(key_name, default=""):
     try:
         return st.secrets[key_name]
@@ -98,8 +96,39 @@ def get_secret(key_name, default=""):
         return os.environ.get(key_name, default)
 
 GEMINI_API_KEY = get_secret("GEMINI_API_KEY", "")
-TELEGRAM_BOT_TOKEN = get_secret("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = get_secret("TELEGRAM_CHAT_ID", "")
+
+# --- Client-Side Clipboard Copy Button Component ---
+def render_clipboard_button(payload_dict, label="📋 Copy Setup to Clipboard"):
+    payload_json = json.dumps(payload_dict).replace("'", "\\'")
+    html_code = f"""
+    <div style="margin-top: 6px;">
+        <button id="copyBtn" style="
+            width: 100%;
+            background-color: #1976d2;
+            color: #ffffff;
+            border: none;
+            border-radius: 6px;
+            padding: 10px 14px;
+            font-size: 0.9rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        " onclick="
+            navigator.clipboard.writeText('{payload_json}').then(() => {{
+                const btn = document.getElementById('copyBtn');
+                btn.innerHTML = '✅ Copied to Clipboard! Click ⚡ Fill BTCC Ticket';
+                btn.style.backgroundColor = '#2e7d32';
+                setTimeout(() => {{
+                    btn.innerHTML = '{label}';
+                    btn.style.backgroundColor = '#1976d2';
+                }}, 3000);
+            }}).catch(err => {{
+                alert('Clipboard write failed: ' + err);
+            }});
+        ">{label}</button>
+    </div>
+    """
+    components.html(html_code, height=52)
 
 # --- Multi-Tier Gemini AI Engine ---
 def generate_gemini_brief(prompt, fallback_text):
@@ -121,7 +150,7 @@ def generate_gemini_brief(prompt, fallback_text):
                 continue
     return fallback_text
 
-# --- Technical Indicator Calculations ---
+# --- Technical Engine ---
 def calculate_indicators(df):
     delta = df['close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
@@ -166,7 +195,7 @@ def calculate_elliott_targets(df):
         "Key Invalidation": round(low, 2)
     }
 
-# --- Cloud-Safe Universal Kline Pipeline ---
+# --- Cloud Kline Fetcher ---
 @st.cache_data(ttl=15)
 def fetch_cloud_klines(symbol="BTC/USDT", tf="1h", limit=50):
     granularity_map = {"5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
@@ -188,7 +217,6 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="1h", limit=50):
         except Exception:
             pass
 
-    # Fallback to Bybit
     bybit_tf_map = {"5m": "5", "15m": "15", "1h": "60", "4h": "240", "1d": "D"}
     bybit_tf = bybit_tf_map.get(tf.lower(), "60")
     try:
@@ -206,7 +234,6 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="1h", limit=50):
     except Exception:
         pass
 
-    # Fallback to Kraken via CCXT
     try:
         exchange = ccxt.kraken({'enableRateLimit': True})
         klines = exchange.fetch_ohlcv(symbol.replace("USDT", "USD"), timeframe=tf, limit=limit)
@@ -216,14 +243,13 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="1h", limit=50):
     except Exception:
         pass
 
-    # Fallback synthetic series
     dates = pd.date_range(end=datetime.now(timezone.utc), periods=limit, freq='h')
     base = 72600.0 if "BTC" in symbol else 2600.0
     prices = base + np.cumsum(np.random.normal(0, base * 0.002, limit))
     df = pd.DataFrame({'datetime': dates, 'open': prices, 'high': prices * 1.003, 'low': prices * 0.997, 'close': prices, 'volume': np.random.uniform(500, 2000, limit)})
     return calculate_indicators(df)
 
-# --- Top Navigation Bar ---
+# --- Top Navigation ---
 st.title("⚡ Institutional Derivatives Execution Terminal")
 
 col_asset, col_tf, col_act = st.columns([3, 2, 1])
@@ -258,7 +284,7 @@ rsi = last_row['rsi']
 overhead_liq, downside_liq = get_liquidity_matrix(df)
 fib_targets = calculate_elliott_targets(df)
 
-# --- Top Metrics Bar ---
+# --- Metrics Banner ---
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 m1.markdown(f"<div class='metric-card'><div class='metric-label'>Mark Price</div><div class='metric-val'>${current_price:,.2f}</div><div class='metric-sub'>Live Spot</div></div>", unsafe_allow_html=True)
 m2.markdown(f"<div class='metric-card'><div class='metric-label'>{selected_tf.upper()} VWAP</div><div class='metric-val'>${vwap_price:,.2f}</div><div class='metric-sub'>Fair Value Anchor</div></div>", unsafe_allow_html=True)
@@ -269,7 +295,7 @@ m6.markdown(f"<div class='metric-card'><div class='metric-label'>Structure Regim
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- Main Analytics Grid ---
+# --- Analytics Grid ---
 col_chart, col_side = st.columns([3, 1])
 
 with col_chart:
@@ -280,7 +306,6 @@ with col_chart:
         row_heights=[0.75, 0.25]
     )
 
-    # OHLC Candlesticks
     fig.add_trace(go.Candlestick(
         x=df['datetime'],
         open=df['open'], high=df['high'], low=df['low'], close=df['close'],
@@ -288,18 +313,15 @@ with col_chart:
         increasing_line_color='#00ff88', decreasing_line_color='#ff3366'
     ), row=1, col=1)
 
-    # VWAP Line
     fig.add_trace(go.Scatter(
         x=df['datetime'], y=df['vwap'],
         mode='lines', line=dict(color='#00bcd4', width=2),
         name=f"{selected_tf.upper()} VWAP"
     ), row=1, col=1)
 
-    # Liquidity Sweep Overlays
     fig.add_hline(y=overhead_liq[0], line_dash="dash", line_color="#ff5252", annotation_text="Overhead Sweep Pool", row=1, col=1)
     fig.add_hline(y=downside_liq[0], line_dash="dash", line_color="#00e676", annotation_text="Downside Bid Shelf", row=1, col=1)
 
-    # CVD Line
     fig.add_trace(go.Scatter(
         x=df['datetime'], y=df['cvd'],
         mode='lines', line=dict(color='#ffc107', width=1.5),
@@ -342,7 +364,7 @@ with col_side:
 
 st.markdown("---")
 
-# --- Institutional Dual-Strategy Gemini Brief ---
+# --- Dual-Strategy AI Brief ---
 st.subheader("🤖 Institutional Strategy Brief & Execution Matrix")
 prompt_ai = f"""
 Act as a senior derivatives execution trader. Synthesize {selected_symbol} ({selected_tf.upper()}):
@@ -376,14 +398,14 @@ st.markdown(brief_text)
 
 st.markdown("---")
 
-# --- Dual 1-Click BTCC Order Bridges (Simultaneous Long & Short) ---
-st.subheader(f"⚡ Dual 1-Click BTCC Order Bridges ({selected_symbol})")
+# --- Dual 1-Click BTCC Order Bridges ---
+st.subheader(f"⚡ Dual BTCC Order Bridges ({selected_symbol})")
 
 col_short, col_long = st.columns(2)
 
 # --- SHORT BRIDGE ---
 with col_short:
-    with st.expander("🔴 SHORT Execution Bridge (Sell / Mean Reversion)", expanded=True):
+    with st.expander("🔴 SHORT Execution Setup (Sell / Mean Reversion)", expanded=True):
         s_entry = st.number_input("Limit Entry ($)", value=float(overhead_liq[0]), key="s_entry")
         s_tp = st.number_input("Take Profit Target ($)", value=float(vwap_price if vwap_price < overhead_liq[0] else downside_liq[0]), key="s_tp")
         s_sl = st.number_input("Stop Loss Target ($)", value=float(round(overhead_liq[0] * 1.015, 2)), key="s_sl")
@@ -395,23 +417,19 @@ with col_short:
 
         st.info(f"**Calculated R:R Ratio**: **{s_rr:.2f}** (Risk: ${s_risk:,.2f} | Reward: ${s_rew:,.2f})")
 
-        sb1, sb2 = st.columns(2)
-        clean_sym = selected_symbol.replace("/", "").upper()
-        btcc_url = f"https://www.btcc.com/en-US/trade/futures/{clean_sym}"
-        sb1.link_button("🚀 Open BTCC Contract", btcc_url, use_container_width=True)
-
-        if sb2.button("📱 Send SHORT to Telegram", use_container_width=True):
-            if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-                msg = f"⚡ *BTCC SHORT Execution Ticket*\n\nAsset: {selected_symbol} ({selected_tf.upper()})\nSide: SHORT (Sell)\nEntry: ${s_entry:,.2f}\nTP: ${s_tp:,.2f}\nSL: ${s_sl:,.2f}\nLeverage: {s_lev}x\nR:R: {s_rr:.2f}"
-                t_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-                requests.post(t_url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-                st.success("SHORT Ticket dispatched to Telegram!")
-            else:
-                st.warning("Configure Telegram secrets in Streamlit Cloud.")
+        short_payload = {
+            "symbol": selected_symbol.replace("/", "").upper(),
+            "side": "SHORT",
+            "entry": float(s_entry),
+            "tp": float(s_tp),
+            "sl": float(s_sl),
+            "leverage": int(s_lev)
+        }
+        render_clipboard_button(short_payload, label="📋 1. Copy SHORT Setup to Clipboard")
 
 # --- LONG BRIDGE ---
 with col_long:
-    with st.expander("🟢 LONG Execution Bridge (Buy / Trend Continuation)", expanded=True):
+    with st.expander("🟢 LONG Execution Setup (Buy / Trend Continuation)", expanded=True):
         l_entry = st.number_input("Limit Entry ($)", value=float(downside_liq[0]), key="l_entry")
         l_tp = st.number_input("Take Profit Target ($)", value=float(overhead_liq[0]), key="l_tp")
         l_sl = st.number_input("Stop Loss Target ($)", value=float(round(downside_liq[0] * 0.985, 2)), key="l_sl")
@@ -423,14 +441,12 @@ with col_long:
 
         st.success(f"**Calculated R:R Ratio**: **{l_rr:.2f}** (Risk: ${l_risk:,.2f} | Reward: ${l_rew:,.2f})")
 
-        lb1, lb2 = st.columns(2)
-        lb1.link_button("🚀 Open BTCC Contract", btcc_url, use_container_width=True)
-
-        if lb2.button("📱 Send LONG to Telegram", use_container_width=True):
-            if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-                msg = f"⚡ *BTCC LONG Execution Ticket*\n\nAsset: {selected_symbol} ({selected_tf.upper()})\nSide: LONG (Buy)\nEntry: ${l_entry:,.2f}\nTP: ${l_tp:,.2f}\nSL: ${l_sl:,.2f}\nLeverage: {l_lev}x\nR:R: {l_rr:.2f}"
-                t_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-                requests.post(t_url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-                st.success("LONG Ticket dispatched to Telegram!")
-            else:
-                st.warning("Configure Telegram secrets in Streamlit Cloud.")
+        long_payload = {
+            "symbol": selected_symbol.replace("/", "").upper(),
+            "side": "LONG",
+            "entry": float(l_entry),
+            "tp": float(l_tp),
+            "sl": float(l_sl),
+            "leverage": int(l_lev)
+        }
+        render_clipboard_button(long_payload, label="📋 1. Copy LONG Setup to Clipboard")
