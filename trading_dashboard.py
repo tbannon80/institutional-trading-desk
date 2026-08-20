@@ -9,7 +9,6 @@ import requests
 import json
 import os
 import urllib.request
-import streamlit.components.v1 as components
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -96,39 +95,6 @@ def get_secret(key_name, default=""):
         return os.environ.get(key_name, default)
 
 GEMINI_API_KEY = get_secret("GEMINI_API_KEY", "")
-
-# --- Client-Side Clipboard Copy Button Component ---
-def render_clipboard_button(payload_dict, label="📋 Copy Setup to Clipboard"):
-    payload_json = json.dumps(payload_dict).replace("'", "\\'")
-    html_code = f"""
-    <div style="margin-top: 6px;">
-        <button id="copyBtn" style="
-            width: 100%;
-            background-color: #1976d2;
-            color: #ffffff;
-            border: none;
-            border-radius: 6px;
-            padding: 10px 14px;
-            font-size: 0.9rem;
-            font-weight: 700;
-            cursor: pointer;
-            transition: background-color 0.2s;
-        " onclick="
-            navigator.clipboard.writeText('{payload_json}').then(() => {{
-                const btn = document.getElementById('copyBtn');
-                btn.innerHTML = '✅ Copied to Clipboard! Click ⚡ Fill BTCC Ticket';
-                btn.style.backgroundColor = '#2e7d32';
-                setTimeout(() => {{
-                    btn.innerHTML = '{label}';
-                    btn.style.backgroundColor = '#1976d2';
-                }}, 3000);
-            }}).catch(err => {{
-                alert('Clipboard write failed: ' + err);
-            }});
-        ">{label}</button>
-    </div>
-    """
-    components.html(html_code, height=52)
 
 # --- Multi-Tier Gemini AI Engine ---
 def generate_gemini_brief(prompt, fallback_text):
@@ -425,7 +391,9 @@ with col_short:
             "sl": float(s_sl),
             "leverage": int(s_lev)
         }
-        render_clipboard_button(short_payload, label="📋 1. Copy SHORT Setup to Clipboard")
+        st.markdown("**📋 1. Click icon in code block to copy SHORT payload:**")
+        st.code(json.dumps(short_payload), language="json")
+        st.caption("👉 Then switch to your BTCC tab and click **⚡ Fill BTCC Ticket** on your bookmarks bar.")
 
 # --- LONG BRIDGE ---
 with col_long:
@@ -449,4 +417,6 @@ with col_long:
             "sl": float(l_sl),
             "leverage": int(l_lev)
         }
-        render_clipboard_button(long_payload, label="📋 1. Copy LONG Setup to Clipboard")
+        st.markdown("**📋 1. Click icon in code block to copy LONG payload:**")
+        st.code(json.dumps(long_payload), language="json")
+        st.caption("👉 Then switch to your BTCC tab and click **⚡ Fill BTCC Ticket** on your bookmarks bar.")
