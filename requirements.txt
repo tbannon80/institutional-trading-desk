@@ -1,0 +1,8 @@
+﻿streamlit
+pandas
+numpy
+ccxt
+yfinance
+plotly
+google-genai
+pyperclip
