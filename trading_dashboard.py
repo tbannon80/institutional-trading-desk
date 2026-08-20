@@ -56,27 +56,52 @@ def get_secret(key, default_val):
         return st.secrets[key]
     return default_val
 
-GEMINI_API_KEY = get_secret("GEMINI_API_KEY", "AQ.Ab8RN6JCXT2O_ibWmtKkNfhkZnqa5D6JZgB0jMIQiNeGBoGUjQ")
-TELEGRAM_BOT_TOKEN = get_secret("TELEGRAM_BOT_TOKEN", "8759950123:AAFqtNPp_A19QvrXkR4VvHCu-SLfIPRLqbw")
-TELEGRAM_CHAT_ID = get_secret("TELEGRAM_CHAT_ID", "8989112896")
+GEMINI_API_KEY = get_secret("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
+TELEGRAM_BOT_TOKEN = get_secret("TELEGRAM_BOT_TOKEN", os.environ.get("TELEGRAM_BOT_TOKEN", ""))
+TELEGRAM_CHAT_ID = get_secret("TELEGRAM_CHAT_ID", os.environ.get("TELEGRAM_CHAT_ID", ""))
 
-client = genai.Client(api_key=GEMINI_API_KEY)
-
-# Multi-Tier Resilient AI Strategy Generator
+# Multi-Tier Resilient AI Strategy Generator (Native REST Fallback)
 def generate_strategy_brief(prompt):
     models_to_try = [
         "gemini-3.6-flash",
         "gemini-3.5-flash",
         "gemini-3.5-flash-lite"
     ]
-    for model_name in models_to_try:
+    
+    # 1. Try modern google-genai client
+    try:
+        c = genai.Client(api_key=GEMINI_API_KEY)
+        for m in models_to_try:
+            try:
+                chat = c.chats.create(model=m)
+                return chat.send_message(prompt).text
+            except Exception as e:
+                if "503" in str(e) or "UNAVAILABLE" in str(e):
+                    continue
+    except Exception:
+        pass
+
+    # 2. Resilient Direct REST API fallback for AQ. / AIza keys
+    for m in models_to_try:
         try:
-            chat = client.chats.create(model=model_name)
-            return chat.send_message(prompt).text
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={GEMINI_API_KEY}"
+            payload_data = {
+                "contents": [{"parts": [{"text": prompt}]}]
+            }
+            req_body = json.dumps(payload_data).encode("utf-8")
+            req = urllib.request.Request(
+                url,
+                data=req_body,
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return data['candidates'][0]['content']['parts'][0]['text']
         except Exception as e:
             if "503" in str(e) or "UNAVAILABLE" in str(e):
                 continue
             return f"API Notice: {e}"
+
     return "Market brief temporarily delayed due to API traffic. Click Refresh in 15 seconds."
 
 # Telegram Utility
