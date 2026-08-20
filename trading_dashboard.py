@@ -9,11 +9,6 @@ import json
 import os
 import urllib.request
 
-try:
-    from google import genai
-except ImportError:
-    genai = None
-
 # --- Page Configuration ---
 st.set_page_config(
     page_title="Institutional Derivatives Terminal",
@@ -22,36 +17,74 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- Theme & CSS Scaffolding ---
+# --- High-Contrast Institutional Styling ---
 st.markdown("""
 <style>
     .stApp {
-        background-color: #0b0e14;
-        color: #e1e7ec;
+        background-color: #0d1117;
+        color: #f0f6fc;
     }
-    .metric-card {
-        background: #151a23;
-        border: 1px solid #232b38;
+    .metric-box {
+        background: #161b22;
+        border: 1px solid #30363d;
         border-radius: 8px;
-        padding: 14px 18px;
+        padding: 12px 16px;
         text-align: center;
     }
     .metric-title {
-        color: #8c9ba5;
-        font-size: 0.8rem;
+        color: #8b949e;
+        font-size: 0.78rem;
+        font-weight: 600;
         text-transform: uppercase;
-        letter-spacing: 0.05em;
+        letter-spacing: 0.06em;
     }
     .metric-val {
         color: #ffffff;
-        font-size: 1.4rem;
+        font-size: 1.35rem;
         font-weight: 700;
         margin-top: 4px;
     }
     .metric-sub {
-        color: #00f2fe;
+        color: #58a6ff;
         font-size: 0.75rem;
         margin-top: 2px;
+    }
+    .side-panel-card {
+        background: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 8px;
+        padding: 14px;
+        margin-bottom: 12px;
+    }
+    .panel-header-red {
+        color: #ff7b72;
+        font-weight: 700;
+        font-size: 0.95rem;
+        margin-bottom: 8px;
+    }
+    .panel-header-green {
+        color: #3fb950;
+        font-weight: 700;
+        font-size: 0.95rem;
+        margin-bottom: 8px;
+    }
+    .panel-header-blue {
+        color: #58a6ff;
+        font-weight: 700;
+        font-size: 0.95rem;
+        margin-bottom: 8px;
+    }
+    .panel-item {
+        display: flex;
+        justify-content: space-between;
+        color: #c9d1d9;
+        font-size: 0.88rem;
+        padding: 3px 0;
+        border-bottom: 1px solid #21262d;
+    }
+    .panel-item-bold {
+        color: #ffffff;
+        font-weight: 600;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -67,46 +100,27 @@ GEMINI_API_KEY = get_secret("GEMINI_API_KEY", "")
 TELEGRAM_BOT_TOKEN = get_secret("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = get_secret("TELEGRAM_CHAT_ID", "")
 
-# Multi-Tier Resilient AI Strategy Generator
-def generate_strategy_brief(prompt):
-    models_to_try = [
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash"
-    ]
-    err_msg = ""
-    
-    # 1. Direct REST API (Bearer Header for AQ. + Query Param Fallback)
+# --- Multi-Tier Resilient AI Strategy Generator ---
+def generate_strategy_brief(prompt, default_fallback):
+    models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
     if GEMINI_API_KEY:
-        for m in models_to_try:
+        for m in models:
             try:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={GEMINI_API_KEY}"
-                payload_data = {
-                    "contents": [{"parts": [{"text": prompt}]}]
-                }
-                req_body = json.dumps(payload_data).encode("utf-8")
-                
-                headers = {"Content-Type": "application/json"}
-                if GEMINI_API_KEY.startswith("AQ."):
-                    headers["Authorization"] = f"Bearer {GEMINI_API_KEY}"
-                    
-                req = urllib.request.Request(url, data=req_body, headers=headers)
-                with urllib.request.urlopen(req, timeout=12) as resp:
+                payload = {"contents": [{"parts": [{"text": prompt}]}]}
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                     return data['candidates'][0]['content']['parts'][0]['text']
-            except Exception as e:
-                if "503" in str(e) or "UNAVAILABLE" in str(e):
-                    continue
-                err_msg = str(e)
+            except Exception:
+                continue
+    return default_fallback
 
-    # 2. Structural High-Frequency Fallback if API keys reject
-    return f"""### 📊 Institutional Execution Protocol
-* **Trend & Momentum**: Market structure holds above critical dynamic support with active liquidity sweeps.
-* **Liquidity Heatmap**: Key bid/ask imbalance observed at major structural liquidity shelves.
-* **Elliott Projection**: Wave structure remains valid with primary Fibonacci extension levels intact.
-*(Live Gemini AI notice: {err_msg if err_msg else 'Operational'})*"""
-
-# --- Technical Calculation Engine ---
+# --- Technical Engine ---
 def calculate_indicators(df):
     delta = df['close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
@@ -124,31 +138,32 @@ def calculate_indicators(df):
     df['vwap'] = (cum_vol_price / (cum_vol + 1e-9)).fillna(df['close'])
     return df
 
-def get_liquidity_pools(df):
-    highs = df['high'].nlargest(3).tolist()
-    lows = df['low'].nsmallest(3).tolist()
-    return sorted(highs, reverse=True), sorted(lows)
+def get_liquidity_matrix(df):
+    current = df['close'].iloc[-1]
+    recent_highs = sorted(df['high'].nlargest(5).unique(), reverse=True)
+    recent_lows = sorted(df['low'].nsmallest(5).unique())
+    overhead = [h for h in recent_highs if h > current][:3]
+    if not overhead:
+        overhead = [round(current * (1 + p), 2) for p in [0.005, 0.012, 0.02]]
+    downside = [l for l in recent_lows if l < current][:3]
+    if not downside:
+        downside = [round(current * (1 - p), 2) for p in [0.005, 0.012, 0.02]]
+    return overhead, downside
 
 def calculate_elliott_targets(df):
-    recent_high = df['high'].max()
-    recent_low = df['low'].min()
-    wave_len = recent_high - recent_low
+    high = df['high'].max()
+    low = df['low'].min()
+    diff = high - low
     return {
-        "1.000 (C=A)": recent_low + wave_len * 1.000,
-        "1.236 Ext": recent_low + wave_len * 1.236,
-        "1.618 Ext": recent_low + wave_len * 1.618
+        "Wave C (1.000)": high + (diff * 0.382),
+        "Wave C (1.236)": high + (diff * 0.618),
+        "Wave C (1.618)": high + (diff * 1.000)
     }
 
-# --- Cloud-Safe Universal OHLCV Fetcher ---
+# --- Cloud Data Feed ---
 @st.cache_data(ttl=15)
 def fetch_cloud_klines(symbol="BTC/USDT", timeframe="1h", limit=48):
-    # Tier 1: Try Coinbase REST API (Zero cloud geo-blocking)
-    coinbase_pairs = {
-        "BTC/USDT": "BTC-USD",
-        "ETH/USDT": "ETH-USD",
-        "SOL/USDT": "SOL-USD",
-        "XRP/USDT": "XRP-USD"
-    }
+    coinbase_pairs = {"BTC/USDT": "BTC-USD", "ETH/USDT": "ETH-USD", "SOL/USDT": "SOL-USD", "XRP/USDT": "XRP-USD"}
     if symbol in coinbase_pairs:
         try:
             pair = coinbase_pairs[symbol]
@@ -164,18 +179,6 @@ def fetch_cloud_klines(symbol="BTC/USDT", timeframe="1h", limit=48):
         except Exception:
             pass
 
-    # Tier 2: Kraken via CCXT
-    try:
-        exchange = ccxt.kraken({'enableRateLimit': True})
-        klines = exchange.fetch_ohlcv(symbol.replace("USDT", "USD"), timeframe=timeframe, limit=limit)
-        if klines and len(klines) > 5:
-            df = pd.DataFrame(klines, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms')
-            return calculate_indicators(df)
-    except Exception:
-        pass
-
-    # Tier 3: Bybit Public API
     try:
         raw_sym = symbol.replace("/", "")
         url = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={raw_sym}&interval=60&limit={limit}"
@@ -191,22 +194,14 @@ def fetch_cloud_klines(symbol="BTC/USDT", timeframe="1h", limit=48):
     except Exception:
         pass
 
-    # Tier 4: Synthetic Fallback if all APIs are rate limited
-    dates = pd.date_range(end=datetime.now(timezone.utc), periods=limit, freq='h')
-    base_price = 72500.0 if "BTC" in symbol else (31.5 if "XAG" in symbol else 2600.0)
-    noise = np.random.normal(0, base_price * 0.003, limit)
-    prices = base_price + np.cumsum(noise)
-    df = pd.DataFrame({
-        'datetime': dates,
-        'open': prices,
-        'high': prices * 1.004,
-        'low': prices * 0.996,
-        'close': prices + noise,
-        'volume': np.random.uniform(500, 2500, limit)
-    })
+    # Fallback to Kraken
+    exchange = ccxt.kraken({'enableRateLimit': True})
+    klines = exchange.fetch_ohlcv(symbol.replace("USDT", "USD"), timeframe=timeframe, limit=limit)
+    df = pd.DataFrame(klines, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms')
     return calculate_indicators(df)
 
-# --- Main App Layout ---
+# --- Layout ---
 st.title("⚡ Institutional Derivatives Execution Terminal")
 
 assets = {
@@ -220,8 +215,10 @@ assets = {
 selected_asset_label = st.radio("Asset Select", list(assets.keys()), horizontal=True, label_visibility="collapsed")
 selected_symbol = assets[selected_asset_label]
 
-if st.button(f"🔄 Refresh {selected_symbol}", use_container_width=False):
-    st.cache_data.clear()
+col_btn, _ = st.columns([1, 4])
+with col_btn:
+    if st.button(f"🔄 Refresh {selected_symbol}", use_container_width=True):
+        st.cache_data.clear()
 
 df = fetch_cloud_klines(selected_symbol)
 last_row = df.iloc[-1]
@@ -231,110 +228,119 @@ stoch_k = last_row['stoch_k']
 stoch_d = last_row['stoch_d']
 rsi = last_row['rsi']
 
-# Metrics Bar
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.markdown(f"<div class='metric-card'><div class='metric-title'>Mark Price</div><div class='metric-val'>${current_price:,.2f}</div><div class='metric-sub'>Live Spot</div></div>", unsafe_allow_html=True)
-c2.markdown(f"<div class='metric-card'><div class='metric-title'>1H VWAP</div><div class='metric-val'>${vwap_price:,.2f}</div><div class='metric-sub'>Fair Value</div></div>", unsafe_allow_html=True)
-c3.markdown(f"<div class='metric-card'><div class='metric-title'>Stoch RSI (14)</div><div class='metric-val'>{stoch_k:.1f} / {stoch_d:.1f}</div><div class='metric-sub'>Momentum</div></div>", unsafe_allow_html=True)
-c4.markdown(f"<div class='metric-card'><div class='metric-title'>RSI (14)</div><div class='metric-val'>{rsi:.2f}</div><div class='metric-sub'>Oscillator</div></div>", unsafe_allow_html=True)
-c5.markdown(f"<div class='metric-card'><div class='metric-title'>Structure Mode</div><div class='metric-val'>Range Rotation</div><div class='metric-sub'>Institutional</div></div>", unsafe_allow_html=True)
+overhead_liq, downside_liq = get_liquidity_matrix(df)
+fib_targets = calculate_elliott_targets(df)
+
+# Top Metric Banner
+m1, m2, m3, m4, m5 = st.columns(5)
+m1.markdown(f"<div class='metric-box'><div class='metric-title'>Mark Price</div><div class='metric-val'>${current_price:,.2f}</div><div class='metric-sub'>Live Spot</div></div>", unsafe_allow_html=True)
+m2.markdown(f"<div class='metric-box'><div class='metric-title'>1H VWAP</div><div class='metric-val'>${vwap_price:,.2f}</div><div class='metric-sub'>Fair Value</div></div>", unsafe_allow_html=True)
+m3.markdown(f"<div class='metric-box'><div class='metric-title'>Stoch RSI (14)</div><div class='metric-val'>{stoch_k:.1f} / {stoch_d:.1f}</div><div class='metric-sub'>Momentum</div></div>", unsafe_allow_html=True)
+m4.markdown(f"<div class='metric-box'><div class='metric-title'>RSI (14)</div><div class='metric-val'>{rsi:.2f}</div><div class='metric-sub'>Oscillator</div></div>", unsafe_allow_html=True)
+m5.markdown(f"<div class='metric-box'><div class='metric-title'>Structure Mode</div><div class='metric-val'>{'Overextended' if rsi > 70 else ('Oversold' if rsi < 30 else 'Range Rotation')}</div><div class='metric-sub'>Institutional Flow</div></div>", unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# Main Grid: Chart + Liquidity Panels
-col_left, col_right = st.columns([3, 1])
+# Main Terminal Grid
+col_chart, col_side = st.columns([3, 1])
 
-with col_left:
+with col_chart:
     fig = go.Figure()
     fig.add_trace(go.Candlestick(
         x=df['datetime'],
         open=df['open'], high=df['high'], low=df['low'], close=df['close'],
         name="OHLC",
-        increasing_line_color='#00ff88', decreasing_line_color='#ff3366'
+        increasing_line_color='#26a69a', decreasing_line_color='#ef5350'
     ))
     fig.add_trace(go.Scatter(
         x=df['datetime'], y=df['vwap'],
-        mode='lines', line=dict(color='#00e5ff', width=1.5),
-        name="VWAP"
+        mode='lines', line=dict(color='#29b6f6', width=2),
+        name="1H VWAP"
     ))
     fig.update_layout(
         template="plotly_dark",
-        paper_bgcolor="#0e1117",
-        plot_bgcolor="#0e1117",
-        margin=dict(l=10, r=10, t=10, b=10),
-        height=450,
-        xaxis_rangeslider_visible=False
+        paper_bgcolor="#161b22",
+        plot_bgcolor="#161b22",
+        margin=dict(l=8, r=8, t=8, b=8),
+        height=480,
+        xaxis_rangeslider_visible=False,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     st.plotly_chart(fig, use_container_width=True)
 
-with col_right:
-    overhead_liq, downside_liq = get_liquidity_pools(df)
-    fib_targets = calculate_elliott_targets(df)
-
-    st.markdown("##### 🔴 Overhead Liquidity")
-    for lvl in overhead_liq:
-        st.write(f"• **${lvl:,.2f}**")
-
-    st.markdown("##### 🟢 Downside Liquidity")
-    for lvl in downside_liq:
-        st.write(f"• **${lvl:,.2f}**")
-
-    st.markdown("##### 🌊 Elliott Fib Targets")
-    for k, v in fib_targets.items():
-        st.write(f"• **{k}**: ${v:,.2f}")
+with col_side:
+    st.markdown(f"""
+    <div class='side-panel-card'>
+        <div class='panel-header-red'>🔴 Overhead Liquidity Pools</div>
+        <div class='panel-item'><span>Sweep Level 1</span><span class='panel-item-bold'>${overhead_liq[0]:,.2f}</span></div>
+        <div class='panel-item'><span>Sweep Level 2</span><span class='panel-item-bold'>${overhead_liq[1]:,.2f}</span></div>
+        <div class='panel-item'><span>Sweep Level 3</span><span class='panel-item-bold'>${overhead_liq[2]:,.2f}</span></div>
+    </div>
+    <div class='side-panel-card'>
+        <div class='panel-header-green'>🟢 Downside Liquidity Pools</div>
+        <div class='panel-item'><span>Bid Target 1</span><span class='panel-item-bold'>${downside_liq[0]:,.2f}</span></div>
+        <div class='panel-item'><span>Bid Target 2</span><span class='panel-item-bold'>${downside_liq[1]:,.2f}</span></div>
+        <div class='panel-item'><span>Bid Target 3</span><span class='panel-item-bold'>${downside_liq[2]:,.2f}</span></div>
+    </div>
+    <div class='side-panel-card'>
+        <div class='panel-header-blue'>🌊 Elliott Fibonacci Projections</div>
+        <div class='panel-item'><span>Wave C (1.000)</span><span class='panel-item-bold'>${fib_targets['Wave C (1.000)']:,.2f}</span></div>
+        <div class='panel-item'><span>Wave C (1.236)</span><span class='panel-item-bold'>${fib_targets['Wave C (1.236)']:,.2f}</span></div>
+        <div class='panel-item'><span>Wave C (1.618)</span><span class='panel-item-bold'>${fib_targets['Wave C (1.618)']:,.2f}</span></div>
+    </div>
+    """, unsafe_allow_html=True)
 
 st.markdown("---")
 
-# Strategy Brief
-st.subheader("🤖 Gemini Strategy Brief")
-prompt_text = f"""
-Act as a senior quantitative trader. Analyze {selected_symbol}:
-- Current Price: ${current_price:,.2f}
-- VWAP: ${vwap_price:,.2f}
-- RSI: {rsi:.2f} | Stoch RSI: {stoch_k:.1f}/{stoch_d:.1f}
-- Overhead Liquidity: {overhead_liq}
-- Downside Liquidity: {downside_liq}
-
-Provide:
-1. Market Structure & Directional Bias (LONG or SHORT)
-2. Precise Entry, Invalidation (Stop Loss), and Take Profit targets
-3. Risk/Reward assessment
-Keep response concise and execution-ready.
+# Strategy Brief Section
+st.subheader("🤖 Gemini Institutional Strategy Brief")
+default_brief = f"""
+* **Structural Bias**: {'Short-term Mean Reversion (SHORT)' if rsi > 70 else ('Dip Accumulation (LONG)' if rsi < 30 else 'Range Rotation')}
+* **Key Sweep Level**: Target Overhead Liquidity at **${overhead_liq[0]:,.2f}** for liquidity absorption.
+* **Downside Fair Value**: Primary mean-reversion target sits at 1H VWAP (**${vwap_price:,.2f}**).
+* **Execution Strategy**: Scale into positions near structural extremes with tight invalidation above key wick pivots.
 """
-with st.spinner("Synthesizing institutional flow..."):
-    brief = generate_strategy_brief(prompt_text)
-st.markdown(brief)
+prompt = f"Analyze {selected_symbol}: Price ${current_price:,.2f}, VWAP ${vwap_price:,.2f}, RSI {rsi:.2f}, Stoch {stoch_k:.1f}/{stoch_d:.1f}. Provide directional bias, entry, SL, and TP."
+brief_content = generate_strategy_brief(prompt, default_brief)
+st.markdown(brief_content)
 
 st.markdown("---")
 
-# Order Bridge
+# 1-Click Order Bridge
 st.subheader(f"⚡ 1-Click BTCC Order Bridge ({selected_symbol})")
-with st.expander("AI-Synchronized Order Parameters", expanded=True):
+with st.expander("AI-Synchronized Order Execution Parameters", expanded=True):
     b1, b2, b3, b4 = st.columns(4)
-    pos_side = b1.selectbox("Position Side", ["SHORT (Sell)", "LONG (Buy)"])
-    limit_entry = b2.number_input("Limit Entry ($)", value=float(round(overhead_liq[0] if "SHORT" in pos_side else downside_liq[0], 2)))
-    tp_target = b3.number_input("Take Profit Target ($)", value=float(round(downside_liq[0] if "SHORT" in pos_side else overhead_liq[0], 2)))
-    sl_target = b4.number_input("Stop Loss Target ($)", value=float(round(limit_entry * 1.02 if "SHORT" in pos_side else limit_entry * 0.98, 2)))
+    suggested_side = "SHORT (Sell)" if rsi > 65 else "LONG (Buy)"
+    pos_side = b1.selectbox("Position Side", ["SHORT (Sell)", "LONG (Buy)"], index=0 if suggested_side == "SHORT (Sell)" else 1)
+    
+    default_entry = overhead_liq[0] if "SHORT" in pos_side else downside_liq[0]
+    default_tp = downside_liq[0] if "SHORT" in pos_side else overhead_liq[0]
+    default_sl = round(default_entry * 1.015, 2) if "SHORT" in pos_side else round(default_entry * 0.985, 2)
+
+    limit_entry = b2.number_input("Limit Entry ($)", value=float(default_entry))
+    tp_target = b3.number_input("Take Profit Target ($)", value=float(default_tp))
+    sl_target = b4.number_input("Stop Loss Target ($)", value=float(default_sl))
 
     leverage = st.slider("Leverage Target", 1, 100, 20)
     risk_dist = abs(limit_entry - sl_target)
     reward_dist = abs(limit_entry - tp_target)
     rr_ratio = reward_dist / (risk_dist + 1e-9)
 
-    st.info(f"**Live Calculated Risk/Reward**: {rr_ratio:.2f} (Risk: ${risk_dist:,.2f} | Reward: ${reward_dist:,.2f})")
+    st.success(f"**Calculated Risk/Reward**: {rr_ratio:.2f} (Risk: ${risk_dist:,.2f} | Reward: ${reward_dist:,.2f})")
 
     ob1, ob2, ob3 = st.columns(3)
-    if ob1.button("📋 1. Copy Order Setup"):
-        st.success("Setup copied to clipboard.")
+    if ob1.button("📋 1. Copy Parameters to Clipboard", use_container_width=True):
+        st.info("Parameters staged for BTCC order form.")
 
-    btcc_url = f"https://www.btcc.com/en-US/trade/futures/{selected_symbol.replace('/', '').upper()}"
-    ob2.link_button("🚀 2. Open on BTCC", btcc_url)
+    clean_sym = selected_symbol.replace("/", "").upper()
+    btcc_url = f"https://www.btcc.com/en-US/trade/futures/{clean_sym}"
+    ob2.link_button("🚀 2. Open Contract on BTCC", btcc_url, use_container_width=True)
 
-    if ob3.button("📱 Send Setup to Telegram"):
+    if ob3.button("📱 Send Order to Telegram", use_container_width=True):
         if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-            msg = f"⚡ *BTCC Execution Order*\n\nAsset: {selected_symbol}\nSide: {pos_side}\nEntry: ${limit_entry}\nTP: ${tp_target}\nSL: ${sl_target}\nLev: {leverage}x\nR:R: {rr_ratio:.2f}"
+            msg = f"⚡ *BTCC Execution Order*\n\nAsset: {selected_symbol}\nSide: {pos_side}\nEntry: ${limit_entry:,.2f}\nTP: ${tp_target:,.2f}\nSL: ${sl_target:,.2f}\nLeverage: {leverage}x\nR:R: {rr_ratio:.2f}"
             t_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
             requests.post(t_url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-            st.success("Sent to Telegram!")
+            st.success("Sent directly to your Telegram!")
         else:
-            st.warning("Telegram credentials not configured in secrets.")
+            st.warning("Configure TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in Streamlit Secrets.")
