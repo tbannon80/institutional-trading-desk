@@ -147,21 +147,44 @@ def calculate_indicators(df):
     df['sma200'] = df['close'].rolling(window=min(len(df), 200), min_periods=5).mean()
     return df
 
+# --- Dynamic Tactical Liquidity Matrix (Fixes Stale Base-Rally Anchors) ---
 def get_liquidity_matrix(df):
     current = df['close'].iloc[-1]
-    recent_highs = sorted(df['high'].nlargest(6).unique(), reverse=True)
-    recent_lows = sorted(df['low'].nsmallest(6).unique())
-    overhead = [h for h in recent_highs if h > current][:3]
-    if not overhead:
-        overhead = [round(current * (1 + p), 2) for p in [0.006, 0.014, 0.025]]
-    downside = [l for l in recent_lows if l < current][:3]
-    if not downside:
-        downside = [round(current * (1 - p), 2) for p in [0.006, 0.014, 0.025]]
+    vwap = df['vwap'].iloc[-1]
+    
+    # 1. Overhead Liquidity (Immediate Resistance & Local Wicks)
+    recent_highs = sorted([h for h in df['high'].tail(24).unique() if h > current])
+    if len(recent_highs) >= 3:
+        overhead = [round(recent_highs[0], 2), round(recent_highs[1], 2), round(recent_highs[-1], 2)]
+    else:
+        # Volatility expansion projection
+        high_anchor = df['high'].max()
+        overhead = [
+            round(max(high_anchor, current * 1.008), 2),
+            round(max(high_anchor * 1.015, current * 1.022), 2),
+            round(max(high_anchor * 1.035, current * 1.045), 2)
+        ]
+
+    # 2. Downside Tactical Liquidity (Recent 12-bar swing lows + VWAP pullbacks, NOT 3-day old bottoms)
+    recent_tail_lows = sorted([l for l in df['low'].tail(18).unique() if l < current], reverse=True)
+    
+    # Target 1: Immediate local dip / order block (0.5% - 1.5% below spot)
+    t1 = round(recent_tail_lows[0], 2) if recent_tail_lows else round(current * 0.992, 2)
+    if (current - t1) / current > 0.035: # If gap is wider than 3.5%, create dynamic local shelf
+        t1 = round(current * 0.991, 2)
+        
+    # Target 2: Session VWAP Anchor or second structural shelf
+    t2 = round(vwap, 2) if vwap < current and (current - vwap) / current < 0.05 else round(t1 * 0.988, 2)
+    
+    # Target 3: Structural Wave Invalidation floor
+    t3 = round(recent_tail_lows[-1], 2) if len(recent_tail_lows) > 1 else round(t2 * 0.985, 2)
+    
+    downside = [t1, t2, t3]
     return overhead, downside
 
 def calculate_elliott_targets(df):
     high = df['high'].max()
-    low = df['low'].min()
+    low = df['low'].tail(24).min() # Anchor wave to recent consolidation impulse
     diff = high - low
     return {
         "1.000 (C=A)": round(high + (diff * 0.382), 2),
@@ -220,7 +243,7 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="1h", limit=60):
         pass
 
     dates = pd.date_range(end=datetime.now(timezone.utc), periods=limit, freq='h')
-    base = 74450.0 if "BTC" in symbol else 2600.0
+    base = 76800.0 if "BTC" in symbol else 2600.0
     prices = base + np.cumsum(np.random.normal(0, base * 0.002, limit))
     df = pd.DataFrame({'datetime': dates, 'open': prices, 'high': prices * 1.003, 'low': prices * 0.997, 'close': prices, 'volume': np.random.uniform(500, 2000, limit)})
     return calculate_indicators(df)
@@ -266,7 +289,7 @@ fib_targets = calculate_elliott_targets(df)
 dxy_synthetic = 98.88
 rsi_4h_approx = round(min(95.0, rsi * 1.15), 1) if rsi > 50 else round(max(15.0, rsi * 0.85), 1)
 
-# --- Expanded Metrics Banner (Matches Morning Build) ---
+# --- Metrics Banner ---
 m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
 m1.markdown(f"<div class='metric-card'><div class='metric-label'>Spot Price</div><div class='metric-val'>${current_price:,.2f}</div><div class='metric-sub'>Live Spot</div></div>", unsafe_allow_html=True)
 m2.markdown(f"<div class='metric-card'><div class='metric-label'>ATR Buffer</div><div class='metric-val'>${atr_val:,.2f}</div><div class='metric-sub'>Volatility Range</div></div>", unsafe_allow_html=True)
@@ -353,7 +376,7 @@ st.subheader("🤖 Gemini Institutional Strategy Brief & Execution Dossier")
 
 prompt_ai = f"""
 You are a senior hedge-fund derivatives execution trader.
-Analyze {selected_symbol} on the {selected_tf.upper()} timeframe with the following data:
+Analyze {selected_symbol} on the {selected_tf.upper()} timeframe with the following live data:
 - Spot Price: ${current_price:,.2f}
 - Session VWAP: ${vwap_price:,.2f}
 - 200 SMA Anchor: ${sma_val:,.2f}
@@ -399,17 +422,17 @@ fallback_ai = f"""
 ### 1. Market Structure & Key Levels
 {selected_symbol} is maintaining strong structural alignment, trading at **${current_price:,.2f}**, above both the 200 SMA (${sma_val:,.2f}) and Session VWAP of **${vwap_price:,.2f}**. 
 * **Key Resistance Levels**: ${overhead_liq[0]:,.2f} (Immediate Pool), ${overhead_liq[1]:,.2f}, ${fib_targets['1.000 (C=A)']:,.2f} (Wave C 1.000 Target).
-* **Key Support Levels**: ${downside_liq[0]:,.2f} (Downside Bid Target), ${vwap_price:,.2f} (Session VWAP), ${fib_targets['Wave B Invalidation']:,.2f} (Structure Invalidation).
+* **Key Support Levels**: ${downside_liq[0]:,.2f} (Downside Bid Target), ${vwap_price:,.2f} (Session VWAP), ${downside_liq[2]:,.2f} (Structure Invalidation).
 
 ### 2. Liquidity & Elliott Wave Alignment
 * **Liquidity Landscape**: Overhead liquidity is compressed near **${overhead_liq[0]:,.2f} - ${overhead_liq[1]:,.2f}**. Downside bids are clustered at **${downside_liq[0]:,.2f}**.
 * **Elliott Wave Alignment**: Progressing in an impulsive expansion targeting the 1.000 Fibonacci extension at **${fib_targets['1.000 (C=A)']:,.2f}** and extended 1.618 at **${fib_targets['1.618 Ext']:,.2f}**.
 
 ### 3. Long Setup (Bullish Expansion)
-* **Thesis**: Dip accumulation on downside liquidity absorption into Session VWAP.
-* **Execution Trigger**: Limit fill in the demand zone or 15m bullish engulfing reclaim of **${downside_liq[0]:,.2f}**.
+* **Thesis**: Dip accumulation on downside liquidity absorption into tactical shelf.
+* **Execution Trigger**: Limit fill in the demand zone or 15m bullish reclaim of **${downside_liq[0]:,.2f}**.
 * **Entry Range**: ${downside_liq[0]:,.2f} - ${round(downside_liq[0] * 1.005, 2):,.2f}
-* **Stop Loss**: ${round(downside_liq[0] * 0.985, 2):,.2f} (Below swing low)
+* **Stop Loss**: ${round(downside_liq[0] * 0.985, 2):,.2f} (Below tactical shelf)
 * **Take Profit 1**: ${overhead_liq[0]:,.2f}
 * **Take Profit 2**: ${fib_targets['1.000 (C=A)']:,.2f}
 * **Risk/Reward Ratio**: 1:3.20
