@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import ccxt
 import pandas as pd
 import numpy as np
@@ -140,7 +140,6 @@ def calculate_indicators(df):
     df['sma200'] = df['close'].rolling(window=min(len(df), 200), min_periods=5).mean()
     return df
 
-# --- Structural SMC Logic ---
 def get_smc_structure(df, symbol):
     current = df['close'].iloc[-1]
     atr = max(df['atr'].iloc[-1], current * 0.006)
@@ -212,7 +211,6 @@ def calculate_elliott_targets(df, symbol):
         "Wave B Floor": round(low, decimals)
     }
 
-# --- Zero-Lag Live Ticker Pipeline ---
 @st.cache_data(ttl=3)
 def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -270,7 +268,6 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
 
     return calculate_indicators(df)
 
-# --- Top Navigation ---
 st.title("⚡ Institutional Derivatives Execution Terminal")
 
 col_asset, col_engine, col_tf, col_act = st.columns([3, 3, 2, 1])
@@ -337,7 +334,6 @@ def fmt(val):
     elif dec == 2: return f"{val:,.2f}"
     return f"{val:,.1f}"
 
-# --- Metrics Banner ---
 m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
 m1.markdown(f"<div class='metric-card'><div class='metric-label'>Spot Price</div><div class='metric-val'>${fmt(current_price)}</div><div class='metric-sub'>Live USDT</div></div>", unsafe_allow_html=True)
 m2.markdown(f"<div class='metric-card'><div class='metric-label'>ATR Buffer</div><div class='metric-val'>${fmt(atr_val)}</div><div class='metric-sub'>Volatility Range</div></div>", unsafe_allow_html=True)
@@ -349,7 +345,6 @@ m7.markdown(f"<div class='metric-card'><div class='metric-label'>Structure Regim
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- Analytics Grid ---
 col_chart, col_side = st.columns([3, 1])
 
 with col_chart:
@@ -447,7 +442,6 @@ with col_side:
 
 st.markdown("---")
 
-# --- Restored 5-Section Gemini Institutional Brief ---
 st.subheader(f"🤖 Gemini Institutional Strategy Brief ({'LuxAlgo SMC Benchmark' if is_smc else 'Tactical Fractal Matrix'})")
 
 prompt_ai = f"""
@@ -541,7 +535,6 @@ col_short, col_long = st.columns(2)
 key_pfx = f"{selected_symbol}_{selected_tf}_{selected_engine[:6]}_{short_entry}_{long_entry}"
 clean_ticker = "SILVERUSDT" if "XAG" in selected_symbol else selected_symbol.replace("/", "").upper()
 
-# --- SHORT BRIDGE ---
 with col_short:
     with st.expander("🔴 SHORT Execution Setup (Sell / Mean Reversion)", expanded=True):
         s_entry = st.number_input(f"Limit Entry (USDT)", value=float(short_entry), step=float(10**(-dec)), format=f"%.{dec}f", key=f"s_e_{key_pfx}")
@@ -567,7 +560,6 @@ with col_short:
         st.code(json.dumps(short_payload), language="json")
         st.caption("👉 Then switch to your BTCC tab and click **⚡ Fill BTCC Ticket** on your bookmarks bar.")
 
-# --- LONG BRIDGE ---
 with col_long:
     with st.expander("🟢 LONG Execution Setup (Buy / Trend Continuation)", expanded=True):
         l_entry = st.number_input(f"Limit Entry (USDT)", value=float(long_entry), step=float(10**(-dec)), format=f"%.{dec}f", key=f"l_e_{key_pfx}")
@@ -592,65 +584,70 @@ with col_long:
         st.markdown("**📋 1. Click icon in code block to copy LONG payload:**")
         st.code(json.dumps(long_payload), language="json")
         st.caption("👉 Then switch to your BTCC tab and click **⚡ Fill BTCC Ticket** on your bookmarks bar.")
-# --- DUAL-COLUMN TACTICAL PLAYBOOK ---
+
+# --- DUAL-COLUMN TACTICAL PLAYBOOK (DYNAMIC) ---
 st.divider()
 st.markdown("### 📋 TACTICAL EXECUTION PLAYBOOK")
 
 col_bull, col_bear = st.columns(2)
 
-# --- BULLISH PLAN ---
+eq_display = f"${fmt(eq_level)}" if eq_level else f"${fmt(vwap_price)}"
+primary_supply_val = f"${fmt(overhead_liq[0])}"
+primary_demand_val = f"${fmt(downside_liq[0])}"
+discount_floor_val = f"${fmt(downside_liq[2])}"
+bos_invalidation_val = f"${fmt(overhead_liq[1])}"
+fib_ext_val = f"${fmt(fib_targets['1.618 Ext'])}"
+
 with col_bull:
     st.markdown("### 🟢 BULLISH PLAN")
-    st.markdown("""
+    st.markdown(f"""
     **THESIS:**  
-    Holding above the local demand floor and defending equilibrium opens the path toward the upper supply zone.
+    Holding above the local demand floor (**{primary_demand_val}**) and defending equilibrium (**{eq_display}**) opens the path toward upper supply.
     
     **BULLISH TRIGGER SETUP:**  
-    * 🟩 Defend the primary demand order block.
-    * 🟩 Reclaim and hold structural equilibrium.
+    * 🟩 Defend primary demand order block at **{primary_demand_val}**.
+    * 🟩 Reclaim and hold structural equilibrium at **{eq_display}**.
     * 🟩 Break and hold above local resistance for momentum confirmation.
     
     **UPSIDE ROADMAP:**  
-    `Equilibrium` $\rightarrow$ `Primary Supply / OB` $\rightarrow$ `Macro Rejection / Fib Extension`
+    `EQ: {eq_display}` $\rightarrow$ `Supply: {primary_supply_val}` $\rightarrow$ `Fib Ext: {fib_ext_val}`
     """)
     
     st.markdown("#### **Bullish Execution Ladder**")
     bull_ladder = {
-        "Target": ["TP1 (EQ Test)", "TP2 (Supply Tap)", "TP3 (Fib Extension)"],
+        "Target": ["TP1 (EQ Test): " + eq_display, "TP2 (Supply Tap): " + primary_supply_val, "TP3 (Fib Ext): " + fib_ext_val],
         "Action": ["Scale Out 30%", "Scale Out 40%", "Runner Target"],
         "Purpose": ["Secure quick profit", "Lock risk-free", "Capture macro expansion"]
     }
     st.table(bull_ladder)
     
-    st.warning("⚠️ **Invalidation:** Clean break, retest, and loss of the Discount Floor support level.")
+    st.warning(f"⚠️ **Invalidation:** Clean break, retest, and loss of the Discount Floor support level at **{discount_floor_val}**.")
 
-# --- BEARISH PLAN ---
 with col_bear:
     st.markdown("### 🔴 BEARISH PLAN")
-    st.markdown("""
+    st.markdown(f"""
     **THESIS:**  
-    Rejection at the upper supply zone or failure to hold equilibrium increases the probability of a sweep down to macro demand.
+    Rejection at the upper supply zone (**{primary_supply_val}**) or failure to hold equilibrium increases the probability of a sweep down to macro demand.
     
     **BEARISH TRIGGER SETUP:**  
-    * ❌ Rejection wick at the Bearish Order Block / Supply Zone.
-    * ❌ Loss of local structural support.
+    * ❌ Rejection wick at the Bearish Supply Zone (**{primary_supply_val}**).
+    * ❌ Loss of local structural support and equilibrium (**{eq_display}**).
     * ❌ Confirmed breakdown of CVD delta.
     
     **DOWNSIDE ROADMAP:**  
-    `Supply Rejection` $\rightarrow$ `Equilibrium` $\rightarrow$ `Discount Floor / Demand Zone`
+    `Supply: {primary_supply_val}` $\rightarrow$ `EQ: {eq_display}` $\rightarrow$ `Demand Floor: {discount_floor_val}`
     """)
     
     st.markdown("#### **Bearish Execution Ladder**")
     bear_ladder = {
-        "Target": ["Entry (Supply Tap)", "TP1 (Mid-Range EQ)", "TP2 (Demand Floor)"],
+        "Target": ["Entry (Supply): " + primary_supply_val, "TP1 (Mid-Range EQ): " + eq_display, "TP2 (Demand Floor): " + discount_floor_val],
         "Action": ["Open Short", "Take Profit 1", "Full Exit / Reverse"],
         "Purpose": ["Initial rejection", "Secure baseline", "Target liquidity pool"]
     }
     st.table(bear_ladder)
     
-    st.error("⚠️ **Invalidation:** Clean break and hold above the BOS Invalidation level.")
+    st.error(f"⚠️ **Invalidation:** Clean break and hold above the BOS Invalidation level at **{bos_invalidation_val}**.")
 
-# --- FOOTER RISK MANAGEMENT ---
 st.divider()
 st.markdown("""
 ### 🛡️ RISK MANAGEMENT & EXECUTION RULES
