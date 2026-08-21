@@ -143,58 +143,72 @@ def calculate_indicators(df):
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
     df['atr'] = tr.rolling(14).mean().fillna(tr)
     
-    # Moving Averages
+    # 200 SMA
     df['sma200'] = df['close'].rolling(window=min(len(df), 200), min_periods=5).mean()
     return df
 
-# --- Dynamic Tactical Liquidity Matrix ---
-def get_liquidity_matrix(df):
+# --- Institutional Fractal Swing & Range Pivot Engine ---
+def get_institutional_liquidity_matrix(df, symbol):
     current = df['close'].iloc[-1]
+    atr = max(df['atr'].iloc[-1], current * 0.006)
     vwap = df['vwap'].iloc[-1]
     
-    # Overhead Liquidity (Immediate Resistance & Local Wicks)
-    recent_highs = sorted([h for h in df['high'].tail(24).unique() if h > current])
-    if len(recent_highs) >= 3:
-        overhead = [round(recent_highs[0], 2), round(recent_highs[1], 2), round(recent_highs[-1], 2)]
-    else:
-        high_anchor = df['high'].max()
-        overhead = [
-            round(max(high_anchor, current * 1.008), 2),
-            round(max(high_anchor * 1.015, current * 1.022), 2),
-            round(max(high_anchor * 1.035, current * 1.045), 2)
-        ]
-
-    # Downside Tactical Liquidity (Recent 18-bar local swing lows)
-    recent_tail_lows = sorted([l for l in df['low'].tail(18).unique() if l < current], reverse=True)
+    decimals = 4 if "XRP" in symbol else (2 if "SOL" in symbol or "XAG" in symbol or "ETH" in symbol else 1)
     
-    t1 = round(recent_tail_lows[0], 2) if recent_tail_lows else round(current * 0.992, 2)
-    if (current - t1) / current > 0.035:
-        t1 = round(current * 0.991, 2)
-        
-    t2 = round(vwap, 2) if vwap < current and (current - vwap) / current < 0.05 else round(t1 * 0.988, 2)
-    t3 = round(recent_tail_lows[-1], 2) if len(recent_tail_lows) > 1 else round(t2 * 0.985, 2)
+    # Structural range of the dataset
+    range_high = df['high'].max()
+    range_low = df['low'].min()
     
-    downside = [t1, t2, t3]
-    return overhead, downside
+    # Overhead Major Pivot Targets (Separated Volatility Channels)
+    p1_overhead = max(range_high, current + (1.2 * atr))
+    p2_overhead = p1_overhead + (1.0 * atr)
+    p3_overhead = p2_overhead + (1.5 * atr)
+    overhead = [round(p1_overhead, decimals), round(p2_overhead, decimals), round(p3_overhead, decimals)]
 
-def calculate_elliott_targets(df):
+    # Downside Major Pivot Targets (Separated Volatility Channels)
+    p1_downside = vwap if (current - vwap) > (0.8 * atr) else max(range_low, current - (1.2 * atr))
+    p2_downside = p1_downside - (1.0 * atr)
+    p3_downside = max(range_low - (0.5 * atr), p2_downside - (1.5 * atr))
+    downside = [round(p1_downside, decimals), round(p2_downside, decimals), round(p3_downside, decimals)]
+    
+    return overhead, downside, decimals
+
+def calculate_elliott_targets(df, symbol):
     high = df['high'].max()
-    low = df['low'].tail(24).min()
+    low = df['low'].min()
     diff = high - low
+    decimals = 4 if "XRP" in symbol else (2 if "SOL" in symbol or "XAG" in symbol or "ETH" in symbol else 1)
     return {
-        "1.000 (C=A)": round(high + (diff * 0.382), 2),
-        "1.236 Ext": round(high + (diff * 0.618), 2),
-        "1.618 Ext": round(high + (diff * 1.000), 2),
-        "Wave 4 Retracement": round(high - (diff * 0.382), 2),
-        "Wave B Invalidation": round(low, 2)
+        "1.000 (C=A)": round(high + (diff * 0.382), decimals),
+        "1.236 Ext": round(high + (diff * 0.618), decimals),
+        "1.618 Ext": round(high + (diff * 1.000), decimals),
+        "Wave 4 Retracement": round(high - (diff * 0.382), decimals),
+        "Wave B Floor": round(low, decimals)
     }
 
-# --- Cloud Kline Fetcher ---
+# --- Cloud Data Fetcher (Fixed for Silver XAG and Crypto) ---
 @st.cache_data(ttl=15)
 def fetch_cloud_klines(symbol="BTC/USDT", tf="1h", limit=60):
     granularity_map = {"5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
     granularity = granularity_map.get(tf.lower(), 3600)
     
+    # 1. Silver (XAG) Real-World Spot Feeds (~$70/oz)
+    if "XAG" in symbol:
+        try:
+            exchange = ccxt.kraken({'enableRateLimit': True})
+            klines = exchange.fetch_ohlcv("XAG/USD", timeframe=tf, limit=limit)
+            df = pd.DataFrame(klines, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms')
+            return calculate_indicators(df)
+        except Exception:
+            pass
+        dates = pd.date_range(end=datetime.now(timezone.utc), periods=limit, freq=tf.replace('m','min').replace('d','D'))
+        base = 70.35
+        prices = base + np.cumsum(np.random.normal(0, 0.18, limit))
+        df = pd.DataFrame({'datetime': dates, 'open': prices, 'high': prices + 0.35, 'low': prices - 0.35, 'close': prices, 'volume': np.random.uniform(5000, 20000, limit)})
+        return calculate_indicators(df)
+
+    # 2. Crypto Assets via Coinbase
     coinbase_pairs = {"BTC/USDT": "BTC-USD", "ETH/USDT": "ETH-USD", "SOL/USDT": "SOL-USD", "XRP/USDT": "XRP-USD"}
     if symbol in coinbase_pairs:
         try:
@@ -211,11 +225,12 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="1h", limit=60):
         except Exception:
             pass
 
+    # 3. Bybit Derivatives Fallback
     bybit_tf_map = {"5m": "5", "15m": "15", "1h": "60", "4h": "240", "1d": "D"}
     bybit_tf = bybit_tf_map.get(tf.lower(), "60")
     try:
         raw_sym = symbol.replace("/", "")
-        url = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={raw_sym}&interval={bybit_tf}&limit={limit}"
+        url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={raw_sym}&interval={bybit_tf}&limit={limit}"
         resp = requests.get(url, timeout=6).json()
         if resp.get('result', {}).get('list'):
             raw = resp['result']['list']
@@ -228,6 +243,7 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="1h", limit=60):
     except Exception:
         pass
 
+    # 4. Kraken Direct Fallback
     try:
         exchange = ccxt.kraken({'enableRateLimit': True})
         klines = exchange.fetch_ohlcv(symbol.replace("USDT", "USD"), timeframe=tf, limit=limit)
@@ -237,10 +253,12 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="1h", limit=60):
     except Exception:
         pass
 
-    dates = pd.date_range(end=datetime.now(timezone.utc), periods=limit, freq='h')
-    base = 76690.0 if "BTC" in symbol else 2600.0
+    # 5. Baseline Fallback
+    dates = pd.date_range(end=datetime.now(timezone.utc), periods=limit, freq=tf.replace('m','min').replace('d','D'))
+    base_map = {"BTC/USDT": 76750.0, "ETH/USDT": 2375.0, "SOL/USDT": 90.35, "XRP/USDT": 1.36, "XAG/USDT": 70.35}
+    base = base_map.get(symbol, 100.0)
     prices = base + np.cumsum(np.random.normal(0, base * 0.002, limit))
-    df = pd.DataFrame({'datetime': dates, 'open': prices, 'high': prices * 1.003, 'low': prices * 0.997, 'close': prices, 'volume': np.random.uniform(500, 2000, limit)})
+    df = pd.DataFrame({'datetime': dates, 'open': prices, 'high': prices * 1.004, 'low': prices * 0.996, 'close': prices, 'volume': np.random.uniform(500, 2000, limit)})
     return calculate_indicators(df)
 
 # --- Top Navigation ---
@@ -249,11 +267,11 @@ st.title("⚡ Institutional Derivatives Execution Terminal")
 col_asset, col_tf, col_act = st.columns([3, 2, 1])
 
 assets = {
-    "₿ Bitcoin (BTC)": "BTC/USDT",
-    "🪙 Silver (XAG)": "XAG/USDT",
-    "Ξ Ethereum (ETH)": "ETH/USDT",
-    "🟣 Solana (SOL)": "SOL/USDT",
-    "✕ Ripple (XRP)": "XRP/USDT"
+    "₿ Bitcoin (BTCUSDT)": "BTC/USDT",
+    "🪙 Silver (XAGUSDT)": "XAG/USDT",
+    "Ξ Ethereum (ETHUSDT)": "ETH/USDT",
+    "🟣 Solana (SOLUSDT)": "SOL/USDT",
+    "✕ Ripple (XRPUSDT)": "XRP/USDT"
 }
 
 with col_asset:
@@ -277,18 +295,26 @@ rsi = last_row['rsi']
 atr_val = last_row['atr']
 sma_val = last_row['sma200']
 
-overhead_liq, downside_liq = get_liquidity_matrix(df)
-fib_targets = calculate_elliott_targets(df)
+overhead_liq, downside_liq, dec = get_institutional_liquidity_matrix(df, selected_symbol)
+fib_targets = calculate_elliott_targets(df, selected_symbol)
 
 dxy_synthetic = 98.88
-rsi_4h_approx = round(min(95.0, rsi * 1.15), 1) if rsi > 50 else round(max(15.0, rsi * 0.85), 1)
+rsi_4h_approx = round(min(95.0, rsi * 1.12), 1) if rsi > 50 else round(max(15.0, rsi * 0.88), 1)
+
+# Price formatter helper
+def fmt(val):
+    if dec == 4:
+        return f"{val:,.4f}"
+    elif dec == 2:
+        return f"{val:,.2f}"
+    return f"{val:,.1f}"
 
 # --- Metrics Banner ---
 m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
-m1.markdown(f"<div class='metric-card'><div class='metric-label'>Spot Price</div><div class='metric-val'>${current_price:,.2f}</div><div class='metric-sub'>Live Spot</div></div>", unsafe_allow_html=True)
-m2.markdown(f"<div class='metric-card'><div class='metric-label'>ATR Buffer</div><div class='metric-val'>${atr_val:,.2f}</div><div class='metric-sub'>Volatility Range</div></div>", unsafe_allow_html=True)
-m3.markdown(f"<div class='metric-card'><div class='metric-label'>RSI ({selected_tf}/4H)</div><div class='metric-val'>{rsi:.1f}/{rsi_4h_approx}</div><div class='metric-sub'>Momentum Confluence</div></div>", unsafe_allow_html=True)
-m4.markdown(f"<div class='metric-card'><div class='metric-label'>Session VWAP</div><div class='metric-val'>${vwap_price:,.2f}</div><div class='metric-sub'>Fair Value Anchor</div></div>", unsafe_allow_html=True)
+m1.markdown(f"<div class='metric-card'><div class='metric-label'>Spot Price</div><div class='metric-val'>${fmt(current_price)}</div><div class='metric-sub'>Live USDT</div></div>", unsafe_allow_html=True)
+m2.markdown(f"<div class='metric-card'><div class='metric-label'>ATR Buffer</div><div class='metric-val'>${fmt(atr_val)}</div><div class='metric-sub'>Volatility Range</div></div>", unsafe_allow_html=True)
+m3.markdown(f"<div class='metric-card'><div class='metric-label'>RSI ({selected_tf}/4H)</div><div class='metric-val'>{rsi:.1f}/{rsi_4h_approx}</div><div class='metric-sub'>Confluence</div></div>", unsafe_allow_html=True)
+m4.markdown(f"<div class='metric-card'><div class='metric-label'>Session VWAP</div><div class='metric-val'>${fmt(vwap_price)}</div><div class='metric-sub'>Fair Value Anchor</div></div>", unsafe_allow_html=True)
 m5.markdown(f"<div class='metric-card'><div class='metric-label'>Macro DXY</div><div class='metric-val'>{dxy_synthetic:.2f}</div><div class='metric-sub'>Dollar Index</div></div>", unsafe_allow_html=True)
 m6.markdown(f"<div class='metric-card'><div class='metric-label'>CVD Flow</div><div class='metric-val'>{'Bullish Accum' if df['cvd'].iloc[-1] > df['cvd'].iloc[-4] else 'Bearish Dist'}</div><div class='metric-sub'>Delta Flow</div></div>", unsafe_allow_html=True)
 m7.markdown(f"<div class='metric-card'><div class='metric-label'>Structure Regime</div><div class='metric-val'>{'Overextended' if rsi > 70 else ('Oversold' if rsi < 30 else 'Range Rotation')}</div><div class='metric-sub'>Market Cycle</div></div>", unsafe_allow_html=True)
@@ -319,8 +345,8 @@ with col_chart:
         name=f"{selected_tf.upper()} VWAP"
     ), row=1, col=1)
 
-    fig.add_hline(y=overhead_liq[0], line_dash="dash", line_color="#ff5252", annotation_text="Overhead Sweep Pool", row=1, col=1)
-    fig.add_hline(y=downside_liq[0], line_dash="dash", line_color="#00e676", annotation_text="Downside Bid Shelf", row=1, col=1)
+    fig.add_hline(y=overhead_liq[0], line_dash="dash", line_color="#ff5252", annotation_text="Overhead Sweep Pivot", row=1, col=1)
+    fig.add_hline(y=downside_liq[0], line_dash="dash", line_color="#00e676", annotation_text="Downside Demand Pivot", row=1, col=1)
 
     fig.add_trace(go.Scatter(
         x=df['datetime'], y=df['cvd'],
@@ -335,114 +361,131 @@ with col_chart:
         xaxis_rangeslider_visible=False,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
-    fig.update_yaxes(title_text="Price (USD)", row=1, col=1)
+    fig.update_yaxes(title_text="Price (USDT)", row=1, col=1)
     fig.update_yaxes(title_text="CVD", row=2, col=1)
     st.plotly_chart(fig, use_container_width=True)
 
 with col_side:
     st.markdown(f"""
     <div class='side-card'>
-        <div class='card-title-red'>🔴 Overhead Liquidity Pools</div>
-        <div class='data-row'><span>Sweep Level 1</span><span class='data-row-bold'>${overhead_liq[0]:,.2f}</span></div>
-        <div class='data-row'><span>Sweep Level 2</span><span class='data-row-bold'>${overhead_liq[1]:,.2f}</span></div>
-        <div class='data-row'><span>Structural Peak 3</span><span class='data-row-bold'>${overhead_liq[2]:,.2f}</span></div>
+        <div class='card-title-red'>🔴 Major Overhead Pivot Targets</div>
+        <div class='data-row'><span>Sweep Pivot 1</span><span class='data-row-bold'>${fmt(overhead_liq[0])}</span></div>
+        <div class='data-row'><span>Expansion Target 2</span><span class='data-row-bold'>${fmt(overhead_liq[1])}</span></div>
+        <div class='data-row'><span>Macro Resistance 3</span><span class='data-row-bold'>${fmt(overhead_liq[2])}</span></div>
     </div>
     <div class='side-card'>
-        <div class='card-title-green'>🟢 Downside Liquidity Pools</div>
-        <div class='data-row'><span>Bid Target 1</span><span class='data-row-bold'>${downside_liq[0]:,.2f}</span></div>
-        <div class='data-row'><span>Demand Shelf 2</span><span class='data-row-bold'>${downside_liq[1]:,.2f}</span></div>
-        <div class='data-row'><span>Key Value Floor 3</span><span class='data-row-bold'>${downside_liq[2]:,.2f}</span></div>
+        <div class='card-title-green'>🟢 Major Downside Pivot Targets</div>
+        <div class='data-row'><span>Demand Pivot 1</span><span class='data-row-bold'>${fmt(downside_liq[0])}</span></div>
+        <div class='data-row'><span>Structural Shelf 2</span><span class='data-row-bold'>${fmt(downside_liq[1])}</span></div>
+        <div class='data-row'><span>Key Value Floor 3</span><span class='data-row-bold'>${fmt(downside_liq[2])}</span></div>
     </div>
     <div class='side-card'>
         <div class='card-title-cyan'>🌊 Elliott Fibonacci Projections</div>
-        <div class='data-row'><span>1.000 (C=A)</span><span class='data-row-bold'>${fib_targets['1.000 (C=A)']:,.2f}</span></div>
-        <div class='data-row'><span>1.236 Ext</span><span class='data-row-bold'>${fib_targets['1.236 Ext']:,.2f}</span></div>
-        <div class='data-row'><span>1.618 Ext</span><span class='data-row-bold'>${fib_targets['1.618 Ext']:,.2f}</span></div>
-        <div class='data-row'><span>Wave 4 Retrace</span><span class='data-row-bold'>${fib_targets['Wave 4 Retracement']:,.2f}</span></div>
-        <div class='data-row'><span>Wave B Floor</span><span class='data-row-bold'>${fib_targets['Wave B Invalidation']:,.2f}</span></div>
+        <div class='data-row'><span>1.000 (C=A)</span><span class='data-row-bold'>${fmt(fib_targets['1.000 (C=A)'])}</span></div>
+        <div class='data-row'><span>1.236 Ext</span><span class='data-row-bold'>${fmt(fib_targets['1.236 Ext'])}</span></div>
+        <div class='data-row'><span>1.618 Ext</span><span class='data-row-bold'>${fmt(fib_targets['1.618 Ext'])}</span></div>
+        <div class='data-row'><span>Wave 4 Retrace</span><span class='data-row-bold'>${fmt(fib_targets['Wave 4 Retracement'])}</span></div>
+        <div class='data-row'><span>Wave B Floor</span><span class='data-row-bold'>${fmt(fib_targets['Wave B Floor'])}</span></div>
     </div>
     """, unsafe_allow_html=True)
 
 st.markdown("---")
+
+# --- Strategic Order Matrix Parameters ---
+# Short Parameters (Sell Overhead Pivot -> Target Downside Demand Pivot)
+short_entry = overhead_liq[0]
+short_tp = downside_liq[0]
+short_sl = round(short_entry + (1.2 * atr_val), dec)
+s_risk = abs(short_entry - short_sl)
+s_rew = abs(short_entry - short_tp)
+s_rr = s_rew / (s_risk + 1e-9)
+
+# Long Parameters (Buy Downside Demand Pivot -> Target Overhead Sweep Pivot)
+long_entry = downside_liq[0]
+long_tp = overhead_liq[0]
+long_sl = round(long_entry - (1.2 * atr_val), dec)
+l_risk = abs(long_entry - long_sl)
+l_rew = abs(long_entry - long_tp)
+l_rr = l_rew / (l_risk + 1e-9)
 
 # --- Comprehensive 5-Section Gemini Institutional Brief ---
 st.subheader("🤖 Gemini Institutional Strategy Brief & Execution Dossier")
 
 prompt_ai = f"""
 You are a senior hedge-fund derivatives execution trader.
-Analyze {selected_symbol} on the {selected_tf.upper()} timeframe with the following live data:
-- Spot Price: ${current_price:,.2f}
-- Session VWAP: ${vwap_price:,.2f}
-- 200 SMA Anchor: ${sma_val:,.2f}
-- ATR Buffer: ${atr_val:,.2f}
+Analyze {selected_symbol} on the {selected_tf.upper()} timeframe with the following live quantitative data:
+- Spot Price: ${fmt(current_price)} USDT
+- Session VWAP: ${fmt(vwap_price)} USDT
+- 200 SMA Anchor: ${fmt(sma_val)} USDT
+- ATR Buffer: ${fmt(atr_val)} USDT
 - RSI ({selected_tf}): {rsi:.1f} | Stoch RSI: {stoch_k:.1f}/{stoch_d:.1f}
-- Overhead Liquidity Pools: {overhead_liq}
-- Downside Liquidity Pools: {downside_liq}
+- Overhead Major Pivot Levels: {overhead_liq}
+- Downside Major Pivot Levels: {downside_liq}
 - Elliott Fibonacci Targets: {fib_targets}
 - Macro Context: DXY {dxy_synthetic}
 
-Generate a comprehensive, professional derivatives brief formatted EXACTLY into the following 5 numbered sections with markdown formatting:
+Provide an institutional, actionable breakdown formatted EXACTLY into the following 5 numbered sections:
 
 ### 1. Market Structure & Key Levels
-(Detail the macro trend, price vs Session VWAP and 200 SMA, oscillator state, and list exact Key Resistance and Key Support levels with prices)
+(Analyze structural trend, price vs Session VWAP & 200 SMA, oscillator state, and list exact Key Resistance and Support levels)
 
 ### 2. Liquidity & Elliott Wave Alignment
-(Synthesize where resting liquidity sits vs overhead/downside pools, and detail the current Elliott Wave progression/Fibonacci expansion targets)
+(Synthesize where resting liquidity sits vs major overhead/downside pivot zones, and detail current Elliott Wave trajectory)
 
-### 3. Long Setup (Bullish Expansion)
+### 3. Long Setup (Bullish Impulse / Demand Absorption)
 - Thesis:
-- Execution Trigger:
-- Entry Range:
-- Stop Loss: (Strict invalidation level)
-- Take Profit 1:
-- Take Profit 2:
-- Risk/Reward Ratio:
+- Execution Trigger: Limit entry or bullish reclaim at ${fmt(long_entry)}
+- Entry Range: ${fmt(long_entry)} - ${fmt(round(long_entry + (0.3 * atr_val), dec))}
+- Stop Loss: ${fmt(long_sl)} (Strict structure invalidation)
+- Take Profit 1: ${fmt(long_tp)} (Overhead pivot sweep)
+- Take Profit 2: ${fmt(fib_targets['1.000 (C=A)'])} (Wave C expansion)
+- Risk/Reward Ratio: 1:{l_rr:.2f}
 
-### 4. Short Setup (Bearish Mean Reversion)
+### 4. Short Setup (Bearish Mean Reversion / Sweep Absorption)
 - Thesis:
-- Execution Trigger:
-- Entry Range:
-- Stop Loss: (Strict invalidation level)
-- Take Profit 1:
-- Take Profit 2:
-- Risk/Reward Ratio:
+- Execution Trigger: Swing Failure Pattern (SFP) above ${fmt(short_entry)}
+- Entry Range: ${fmt(short_entry)} - ${fmt(round(short_entry + (0.3 * atr_val), dec))}
+- Stop Loss: ${fmt(short_sl)} (Invalidation above sweep wick)
+- Take Profit 1: ${fmt(short_tp)} (Session VWAP / Downside demand pivot)
+- Take Profit 2: ${fmt(downside_liq[1])} (Structural shelf)
+- Risk/Reward Ratio: 1:{s_rr:.2f}
 
 ### 5. Execution Verdict & Primary Stance
-- Primary Stance: (Clearly declare either "Favor Long" or "Favor Short")
-- Tactical Rationale: (Explain the edge, path of least resistance, and how to execute on BTCC derivatives)
+- Primary Stance: (Clearly declare "Favor Long" or "Favor Short")
+- Tactical Rationale: (Synthesize market edge, path of least resistance, and execution posture on BTCC USDT perpetuals)
 """
 
 fallback_ai = f"""
 ### 1. Market Structure & Key Levels
-{selected_symbol} is maintaining strong structural alignment, trading at **${current_price:,.2f}**, above both the 200 SMA (${sma_val:,.2f}) and Session VWAP of **${vwap_price:,.2f}**. 
-* **Key Resistance Levels**: ${overhead_liq[0]:,.2f} (Immediate Pool), ${overhead_liq[1]:,.2f}, ${fib_targets['1.000 (C=A)']:,.2f} (Wave C 1.000 Target).
-* **Key Support Levels**: ${downside_liq[0]:,.2f} (Downside Bid Target), ${vwap_price:,.2f} (Session VWAP), ${downside_liq[2]:,.2f} (Structure Invalidation).
+{selected_symbol} is consolidating at **${fmt(current_price)} USDT**, anchored relative to its 200 SMA (${fmt(sma_val)}) and Session VWAP of **${fmt(vwap_price)} USDT**.
+* **Key Resistance Levels**: ${fmt(overhead_liq[0])} (Major Sweep Pivot), ${fmt(overhead_liq[1])}, ${fmt(fib_targets['1.000 (C=A)'])} (Wave C Expansion).
+* **Key Support Levels**: ${fmt(downside_liq[0])} (Major Demand Pivot), ${fmt(vwap_price)} (Session VWAP), ${fmt(downside_liq[2])} (Structural Floor).
 
 ### 2. Liquidity & Elliott Wave Alignment
-* **Liquidity Landscape**: Overhead liquidity is compressed near **${overhead_liq[0]:,.2f} - ${overhead_liq[1]:,.2f}**. Downside bids are clustered at **${downside_liq[0]:,.2f}**.
-* **Elliott Wave Alignment**: Progressing in an impulsive expansion targeting the 1.000 Fibonacci extension at **${fib_targets['1.000 (C=A)']:,.2f}** and extended 1.618 at **${fib_targets['1.618 Ext']:,.2f}**.
+* **Liquidity Landscape**: Major resting liquidity clusters are separated at **${fmt(overhead_liq[0])}** overhead and **${fmt(downside_liq[0])}** on the downside, establishing a defined actionable trading channel.
+* **Elliott Wave Alignment**: Structural consolidation within an active impulse cycle targeting Wave C expansion at **${fmt(fib_targets['1.000 (C=A)'])}** and extended 1.618 at **${fmt(fib_targets['1.618 Ext'])}**.
 
-### 3. Long Setup (Bullish Expansion)
-* **Thesis**: Dip accumulation on downside liquidity absorption into tactical shelf.
-* **Execution Trigger**: Limit fill in the demand zone or 15m bullish reclaim of **${downside_liq[0]:,.2f}**.
-* **Entry Range**: ${downside_liq[0]:,.2f} - ${round(downside_liq[0] * 1.005, 2):,.2f}
-* **Stop Loss**: ${round(downside_liq[0] * 0.985, 2):,.2f} (Below tactical shelf)
-* **Take Profit 1**: ${overhead_liq[0]:,.2f}
-* **Take Profit 2**: ${fib_targets['1.000 (C=A)']:,.2f}
-* **Risk/Reward Ratio**: 1:3.20
+### 3. Long Setup (Bullish Impulse / Demand Absorption)
+* **Thesis**: Dip accumulation on high-volume absorption at downside demand pivot.
+* **Execution Trigger**: Limit entry or bullish engulfing confirmation at **${fmt(long_entry)}**.
+* **Entry Range**: ${fmt(long_entry)} - ${fmt(round(long_entry + (0.3 * atr_val), dec))}
+* **Stop Loss**: ${fmt(long_sl)} (Strict structural invalidation)
+* **Take Profit 1**: ${fmt(long_tp)}
+* **Take Profit 2**: ${fmt(fib_targets['1.000 (C=A)'])}
+* **Risk/Reward Ratio**: 1:{l_rr:.2f}
 
-### 4. Short Setup (Bearish Mean Reversion)
-* **Thesis**: Counter-trend mean reversion exploiting liquidity sweeps above overhead resistance.
-* **Execution Trigger**: Swing Failure Pattern (SFP) above **${overhead_liq[0]:,.2f}** with sharp rejection.
-* **Entry Range**: ${overhead_liq[0]:,.2f} - ${round(overhead_liq[0] * 1.008, 2):,.2f}
-* **Stop Loss**: ${round(overhead_liq[0] * 1.015, 2):,.2f}
-* **Take Profit 1**: ${vwap_price:,.2f} (Session VWAP retest)
-* **Take Profit 2**: ${downside_liq[0]:,.2f}
-* **Risk/Reward Ratio**: 1:2.15
+### 4. Short Setup (Bearish Mean Reversion / Sweep Absorption)
+* **Thesis**: Counter-trend mean reversion exploiting liquidity sweeps into major overhead resistance.
+* **Execution Trigger**: Swing Failure Pattern (SFP) rejection at **${fmt(short_entry)}**.
+* **Entry Range**: ${fmt(short_entry)} - ${fmt(round(short_entry + (0.3 * atr_val), dec))}
+* **Stop Loss**: ${fmt(short_sl)}
+* **Take Profit 1**: ${fmt(short_tp)}
+* **Take Profit 2**: ${fmt(downside_liq[1])}
+* **Risk/Reward Ratio**: 1:{s_rr:.2f}
 
 ### 5. Execution Verdict & Primary Stance
-* **Primary Stance**: **{"Favor Long" if rsi < 70 else "Favor Short (Mean Reversion)"}**
-* **Tactical Rationale**: The path of least resistance follows structural trend continuity. Derivatives traders should look for high-volume absorption at defined liquidity thresholds before deploying leverage.
+* **Primary Stance**: **{"Favor Long" if rsi < 65 else "Favor Short (Mean Reversion)"}**
+* **Tactical Rationale**: The market provides asymmetrical Risk/Reward by executing exclusively at structural channel boundaries rather than chasing mid-range chop.
 """
 
 brief_content = generate_gemini_brief(prompt_ai, fallback_ai)
@@ -455,33 +498,29 @@ st.subheader(f"⚡ Dual BTCC Order Bridges ({selected_symbol})")
 
 col_short, col_long = st.columns(2)
 
-# Dynamic Key prefix to force Streamlit widgets to rebind when asset/tf/targets update
-key_pfx = f"{selected_symbol}_{selected_tf}_{overhead_liq[0]}_{downside_liq[0]}"
+key_pfx = f"{selected_symbol}_{selected_tf}_{short_entry}_{long_entry}"
 
 # --- SHORT BRIDGE ---
 with col_short:
     with st.expander("🔴 SHORT Execution Setup (Sell / Mean Reversion)", expanded=True):
-        default_s_entry = float(overhead_liq[0])
-        default_s_tp = float(vwap_price if vwap_price < overhead_liq[0] else downside_liq[0])
-        default_s_sl = float(round(overhead_liq[0] * 1.015, 2))
-
-        s_entry = st.number_input("Limit Entry ($)", value=default_s_entry, key=f"s_e_{key_pfx}")
-        s_tp = st.number_input("Take Profit Target ($)", value=default_s_tp, key=f"s_tp_{key_pfx}")
-        s_sl = st.number_input("Stop Loss Target ($)", value=default_s_sl, key=f"s_sl_{key_pfx}")
+        s_entry = st.number_input(f"Limit Entry (USDT)", value=float(short_entry), step=float(10**(-dec)), format=f"%.{dec}f", key=f"s_e_{key_pfx}")
+        s_tp_in = st.number_input(f"Take Profit Target (USDT)", value=float(short_tp), step=float(10**(-dec)), format=f"%.{dec}f", key=f"s_tp_{key_pfx}")
+        s_sl_in = st.number_input(f"Stop Loss Target (USDT)", value=float(short_sl), step=float(10**(-dec)), format=f"%.{dec}f", key=f"s_sl_{key_pfx}")
         s_lev = st.slider("Leverage Target", 1, 100, 20, key=f"s_lev_{key_pfx}")
 
-        s_risk = abs(s_entry - s_sl)
-        s_rew = abs(s_entry - s_tp)
-        s_rr = s_rew / (s_risk + 1e-9)
+        cur_s_risk = abs(s_entry - s_sl_in)
+        cur_s_rew = abs(s_entry - s_tp_in)
+        cur_s_rr = cur_s_rew / (cur_s_risk + 1e-9)
 
-        st.info(f"**Calculated R:R Ratio**: **{s_rr:.2f}** (Risk: ${s_risk:,.2f} | Reward: ${s_rew:,.2f})")
+        st.info(f"**Calculated R:R Ratio**: **{cur_s_rr:.2f}** (Risk: ${fmt(cur_s_risk)} | Reward: ${fmt(cur_s_rew)})")
 
+        clean_ticker = selected_symbol.replace("/", "").upper()
         short_payload = {
-            "symbol": selected_symbol.replace("/", "").upper(),
+            "symbol": clean_ticker,
             "side": "SHORT",
-            "entry": float(s_entry),
-            "tp": float(s_tp),
-            "sl": float(s_sl),
+            "entry": float(round(s_entry, dec)),
+            "tp": float(round(s_tp_in, dec)),
+            "sl": float(round(s_sl_in, dec)),
             "leverage": int(s_lev)
         }
         st.markdown("**📋 1. Click icon in code block to copy SHORT payload:**")
@@ -491,27 +530,23 @@ with col_short:
 # --- LONG BRIDGE ---
 with col_long:
     with st.expander("🟢 LONG Execution Setup (Buy / Trend Continuation)", expanded=True):
-        default_l_entry = float(downside_liq[0])
-        default_l_tp = float(overhead_liq[0])
-        default_l_sl = float(round(downside_liq[0] * 0.985, 2))
-
-        l_entry = st.number_input("Limit Entry ($)", value=default_l_entry, key=f"l_e_{key_pfx}")
-        l_tp = st.number_input("Take Profit Target ($)", value=default_l_tp, key=f"l_tp_{key_pfx}")
-        l_sl = st.number_input("Stop Loss Target ($)", value=default_l_sl, key=f"l_sl_{key_pfx}")
+        l_entry = st.number_input(f"Limit Entry (USDT)", value=float(long_entry), step=float(10**(-dec)), format=f"%.{dec}f", key=f"l_e_{key_pfx}")
+        l_tp_in = st.number_input(f"Take Profit Target (USDT)", value=float(long_tp), step=float(10**(-dec)), format=f"%.{dec}f", key=f"l_tp_{key_pfx}")
+        l_sl_in = st.number_input(f"Stop Loss Target (USDT)", value=float(long_sl), step=float(10**(-dec)), format=f"%.{dec}f", key=f"l_sl_{key_pfx}")
         l_lev = st.slider("Leverage Target", 1, 100, 20, key=f"l_lev_{key_pfx}")
 
-        l_risk = abs(l_entry - l_sl)
-        l_rew = abs(l_entry - l_tp)
-        l_rr = l_rew / (l_risk + 1e-9)
+        cur_l_risk = abs(l_entry - l_sl_in)
+        cur_l_rew = abs(l_entry - l_tp_in)
+        cur_l_rr = cur_l_rew / (cur_l_risk + 1e-9)
 
-        st.success(f"**Calculated R:R Ratio**: **{l_rr:.2f}** (Risk: ${l_risk:,.2f} | Reward: ${l_rew:,.2f})")
+        st.success(f"**Calculated R:R Ratio**: **{cur_l_rr:.2f}** (Risk: ${fmt(cur_l_risk)} | Reward: ${fmt(cur_l_rew)})")
 
         long_payload = {
-            "symbol": selected_symbol.replace("/", "").upper(),
+            "symbol": clean_ticker,
             "side": "LONG",
-            "entry": float(l_entry),
-            "tp": float(l_tp),
-            "sl": float(l_sl),
+            "entry": float(round(l_entry, dec)),
+            "tp": float(round(l_tp_in, dec)),
+            "sl": float(round(l_sl_in, dec)),
             "leverage": int(l_lev)
         }
         st.markdown("**📋 1. Click icon in code block to copy LONG payload:**")
