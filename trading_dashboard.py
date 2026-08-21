@@ -629,8 +629,6 @@ with col_bear:
     **THESIS:**  
     Rejection at the upper supply zone (**{primary_supply_val}**) or failure to hold equilibrium increases the probability of a sweep down to macro demand.
     
-    **BULLISH TRIGGER SETUP:** -> *Wait, let's keep it bearish:*
-    
     **BEARISH TRIGGER SETUP:**  
     * ❌ Rejection wick at the Bearish Supply Zone (**{primary_supply_val}**).
     * ❌ Loss of local structural support and equilibrium (**{eq_display}**).
