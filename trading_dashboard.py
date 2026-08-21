@@ -142,40 +142,33 @@ def calculate_indicators(df):
     df['sma200'] = df['close'].rolling(window=min(len(df), 200), min_periods=5).mean()
     return df
 
-# --- LuxAlgo Smart Money Concepts (SMC) ---
+# --- Structural SMC Logic with Directional Guarantees ---
 def get_smc_structure(df, symbol):
     current = df['close'].iloc[-1]
     atr = max(df['atr'].iloc[-1], current * 0.006)
+    vwap = df['vwap'].iloc[-1]
     decimals = 4 if "XRP" in symbol else (3 if "XAG" in symbol else (2 if "SOL" in symbol or "ETH" in symbol else 1))
     
-    bear_fvg_boxes = []
-    bull_fvg_boxes = []
-    for i in range(2, len(df)):
-        if df['low'].iloc[i-2] > df['high'].iloc[i] and df['low'].iloc[i-2] > current:
-            bear_fvg_boxes.append((df['low'].iloc[i-2], df['high'].iloc[i], df['datetime'].iloc[i-2]))
-        if df['high'].iloc[i-2] < df['low'].iloc[i] and df['high'].iloc[i-2] < current:
-            bull_fvg_boxes.append((df['low'].iloc[i], df['high'].iloc[i-2], df['datetime'].iloc[i-2]))
+    # Bearish FVG (Strictly ABOVE current price)
+    bear_fvg = [df['low'].iloc[i-2] for i in range(2, len(df)) if df['low'].iloc[i-2] > df['high'].iloc[i] and df['low'].iloc[i-2] > current]
+    # Bullish FVG (Strictly BELOW current price)
+    bull_fvg = [df['low'].iloc[i] for i in range(2, len(df)) if df['high'].iloc[i-2] < df['low'].iloc[i] and df['low'].iloc[i] < current]
 
-    ob_high = df['high'].tail(20).max()
-    ob_low = df['low'].tail(20).min()
-    
-    if bear_fvg_boxes:
-        primary_supply_top, primary_supply_bot, _ = bear_fvg_boxes[-1]
-    else:
-        primary_supply_bot = max(ob_high * 0.998, current + (1.1 * atr))
-        primary_supply_top = primary_supply_bot + (0.8 * atr)
-        
-    if bull_fvg_boxes:
-        primary_demand_top, primary_demand_bot, _ = bull_fvg_boxes[-1]
-    else:
-        primary_demand_top = min(ob_low * 1.002, current - (1.1 * atr))
-        primary_demand_bot = primary_demand_top - (0.8 * atr)
+    # Supply Level (Strictly > current)
+    short_entry = round(bear_fvg[-1] if bear_fvg else max(df['high'].tail(15).max(), current + (1.0 * atr)), decimals)
+    short_sl = round(short_entry + (1.1 * atr), decimals)
+    short_tp = round(vwap if vwap < short_entry - (1.2 * atr) else min(df['low'].min(), short_entry - (2.0 * atr)), decimals)
 
-    overhead = [round(primary_supply_bot, decimals), round(primary_supply_top, decimals), round(primary_supply_top + (1.2 * atr), decimals)]
-    downside = [round(primary_demand_top, decimals), round(primary_demand_bot, decimals), round(primary_demand_bot - (1.2 * atr), decimals)]
+    # Demand Level (Strictly < current)
+    long_entry = round(bull_fvg[-1] if bull_fvg else min(df['low'].tail(15).min(), current - (1.0 * atr)), decimals)
+    long_sl = round(long_entry - (1.1 * atr), decimals)
+    long_tp = round(vwap if vwap > long_entry + (1.2 * atr) else max(df['high'].max(), long_entry + (2.0 * atr)), decimals)
+
+    overhead = [short_entry, round(short_entry + (0.8 * atr), decimals), round(short_entry + (1.5 * atr), decimals)]
+    downside = [long_entry, round(long_entry - (0.8 * atr), decimals), round(long_entry - (1.5 * atr), decimals)]
     
-    range_max = df['high'].tail(30).max()
-    range_min = df['low'].tail(30).min()
+    range_max = max(df['high'].max(), short_entry)
+    range_min = min(df['low'].min(), long_entry)
     eq_level = round((range_max + range_min) / 2.0, decimals)
 
     bos_markers = []
@@ -185,7 +178,10 @@ def get_smc_structure(df, symbol):
         elif df['close'].iloc[i] < df['low'].iloc[i-5:i].min():
             bos_markers.append((df['datetime'].iloc[i], df['low'].iloc[i], "CHoCH ▼", "#ff5252"))
 
-    return overhead, downside, decimals, (primary_supply_top, primary_supply_bot), (primary_demand_top, primary_demand_bot), eq_level, bos_markers[-3:]
+    supply_box = (overhead[1], overhead[0])
+    demand_box = (downside[0], downside[1])
+
+    return overhead, downside, decimals, supply_box, demand_box, eq_level, bos_markers[-3:], short_entry, short_tp, short_sl, long_entry, long_tp, long_sl
 
 def get_tactical_liquidity_matrix(df, symbol):
     current = df['close'].iloc[-1]
@@ -196,17 +192,18 @@ def get_tactical_liquidity_matrix(df, symbol):
     range_high = df['high'].max()
     range_low = df['low'].min()
     
-    p1_overhead = max(range_high, current + (1.2 * atr))
-    p2_overhead = p1_overhead + (1.0 * atr)
-    p3_overhead = p2_overhead + (1.5 * atr)
-    overhead = [round(p1_overhead, decimals), round(p2_overhead, decimals), round(p3_overhead, decimals)]
+    short_entry = round(max(range_high, current + (1.2 * atr)), decimals)
+    short_sl = round(short_entry + (1.2 * atr), decimals)
+    short_tp = round(vwap if vwap < short_entry - (1.2 * atr) else range_low, decimals)
 
-    p1_downside = vwap if (current - vwap) > (0.8 * atr) else max(range_low, current - (1.2 * atr))
-    p2_downside = p1_downside - (1.0 * atr)
-    p3_downside = max(range_low - (0.5 * atr), p2_downside - (1.5 * atr))
-    downside = [round(p1_downside, decimals), round(p2_downside, decimals), round(p3_downside, decimals)]
+    long_entry = round(min(range_low, current - (1.2 * atr)), decimals)
+    long_sl = round(long_entry - (1.2 * atr), decimals)
+    long_tp = round(vwap if vwap > long_entry + (1.2 * atr) else range_high, decimals)
+
+    overhead = [short_entry, round(short_entry + (1.0 * atr), decimals), round(short_entry + (1.5 * atr), decimals)]
+    downside = [long_entry, round(long_entry - (1.0 * atr), decimals), round(long_entry - (1.5 * atr), decimals)]
     
-    return overhead, downside, decimals
+    return overhead, downside, decimals, short_entry, short_tp, short_sl, long_entry, long_tp, long_sl
 
 def calculate_elliott_targets(df, symbol):
     high = df['high'].max()
@@ -221,13 +218,12 @@ def calculate_elliott_targets(df, symbol):
         "Wave B Floor": round(low, decimals)
     }
 
-# --- Robust Multi-Provider Live Feed (Never Blocks or Desyncs) ---
 @st.cache_data(ttl=5)
 def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     fsym = "BTC" if "BTC" in symbol else ("ETH" if "ETH" in symbol else ("SOL" if "SOL" in symbol else ("XRP" if "XRP" in symbol else "XAG")))
     
-    # 1. CryptoCompare Unrestricted Global API
+    # 1. CryptoCompare Global Live Feed
     try:
         agg = 5 if tf == "5m" else (15 if tf == "15m" else 60)
         endpoint = "histominute" if "m" in tf else ("histohour" if "h" in tf else "histoday")
@@ -244,7 +240,7 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
     except Exception:
         pass
 
-    # 2. Kraken Public Global API
+    # 2. Kraken Public API
     try:
         kraken_pair = "XBTUSD" if fsym == "BTC" else (f"{fsym}USD" if fsym != "SOL" else "SOLUSD")
         if fsym == "XAG": kraken_pair = "XAGUSD"
@@ -264,26 +260,7 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
     except Exception:
         pass
 
-    # 3. Coinbase Pro with User-Agent
-    try:
-        gran = 300 if tf == "5m" else 900
-        cb_pair = f"{fsym}-USD"
-        url = f"https://api.exchange.coinbase.com/products/{cb_pair}/candles?granularity={gran}"
-        r = requests.get(url, headers=headers, timeout=4).json()
-        if isinstance(r, list) and len(r) > 5:
-            df = pd.DataFrame(r, columns=['timestamp', 'low', 'high', 'open', 'close', 'volume'])
-            df = df.iloc[::-1].tail(limit).reset_index(drop=True)
-            df['datetime'] = pd.to_datetime(df['timestamp'], unit='s')
-            return calculate_indicators(df)
-    except Exception:
-        pass
-
-    # Fallback to direct live ticker price lock
-    dates = pd.date_range(end=datetime.now(timezone.utc), periods=limit, freq='5min')
-    base = 77077.0 if fsym == "BTC" else (69.57 if fsym == "XAG" else 2387.0)
-    prices = np.full(limit, base)
-    df = pd.DataFrame({'datetime': dates, 'open': prices, 'high': prices + 5, 'low': prices - 5, 'close': prices, 'volume': np.random.uniform(500, 2000, limit)})
-    return calculate_indicators(df)
+    return None
 
 # --- Top Navigation ---
 st.title("⚡ Institutional Derivatives Execution Terminal")
@@ -327,24 +304,30 @@ sma_val = last_row['sma200']
 
 is_smc = "LuxAlgo" in selected_engine
 if is_smc:
-    overhead_liq, downside_liq, dec, supply_box, demand_box, eq_level, bos_marks = get_smc_structure(df, selected_symbol)
+    overhead_liq, downside_liq, dec, supply_box, demand_box, eq_level, bos_marks, short_entry, short_tp, short_sl, long_entry, long_tp, long_sl = get_smc_structure(df, selected_symbol)
     engine_badge = "SMC / FVG Native"
 else:
-    overhead_liq, downside_liq, dec = get_tactical_liquidity_matrix(df, selected_symbol)
+    overhead_liq, downside_liq, dec, short_entry, short_tp, short_sl, long_entry, long_tp, long_sl = get_tactical_liquidity_matrix(df, selected_symbol)
     engine_badge = "Fractal Liquidity Engine"
     supply_box, demand_box, eq_level, bos_marks = None, None, None, []
+
+# Enforce Correct Risk/Reward Arithmetic
+s_risk = abs(short_entry - short_sl)
+s_rew = abs(short_entry - short_tp)
+s_rr = s_rew / (s_risk + 1e-9)
+
+l_risk = abs(long_entry - long_sl)
+l_rew = abs(long_entry - long_tp)
+l_rr = l_rew / (l_risk + 1e-9)
 
 fib_targets = calculate_elliott_targets(df, selected_symbol)
 dxy_synthetic = 98.88
 rsi_4h_approx = round(min(95.0, rsi * 1.12), 1) if rsi > 50 else round(max(15.0, rsi * 0.88), 1)
 
 def fmt(val):
-    if dec == 4:
-        return f"{val:,.4f}"
-    elif dec == 3:
-        return f"{val:,.3f}"
-    elif dec == 2:
-        return f"{val:,.2f}"
+    if dec == 4: return f"{val:,.4f}"
+    elif dec == 3: return f"{val:,.3f}"
+    elif dec == 2: return f"{val:,.2f}"
     return f"{val:,.1f}"
 
 # --- Metrics Banner ---
@@ -457,21 +440,6 @@ with col_side:
 
 st.markdown("---")
 
-# --- Strategic Order Parameters ---
-short_entry = overhead_liq[0]
-short_tp = downside_liq[0]
-short_sl = round(short_entry + (1.2 * atr_val), dec)
-s_risk = abs(short_entry - short_sl)
-s_rew = abs(short_entry - short_tp)
-s_rr = s_rew / (s_risk + 1e-9)
-
-long_entry = downside_liq[0]
-long_tp = overhead_liq[0]
-long_sl = round(long_entry - (1.2 * atr_val), dec)
-l_risk = abs(long_entry - long_sl)
-l_rew = abs(long_entry - long_tp)
-l_rr = l_rew / (l_risk + 1e-9)
-
 # --- Comprehensive 5-Section Gemini Institutional Brief ---
 st.subheader(f"🤖 Gemini Institutional Strategy Brief ({'LuxAlgo SMC Benchmark' if is_smc else 'Tactical Fractal Matrix'})")
 
@@ -481,8 +449,8 @@ You are a senior hedge-fund derivatives execution trader evaluating {selected_sy
 - Session VWAP: ${fmt(vwap_price)} USDT
 - ATR Buffer: ${fmt(atr_val)} USDT
 - RSI ({selected_tf}): {rsi:.1f} | Stoch RSI: {stoch_k:.1f}/{stoch_d:.1f}
-- Overhead Levels: {overhead_liq}
-- Downside Levels: {downside_liq}
+- Short Setup: Entry ${fmt(short_entry)} -> TP ${fmt(short_tp)} -> SL ${fmt(short_sl)} (R:R 1:{s_rr:.2f})
+- Long Setup: Entry ${fmt(long_entry)} -> TP ${fmt(long_tp)} -> SL ${fmt(long_sl)} (R:R 1:{l_rr:.2f})
 - Elliott Fibonacci Targets: {fib_targets}
 - Macro Context: DXY {dxy_synthetic}
 
@@ -496,7 +464,7 @@ Provide an institutional, actionable breakdown formatted EXACTLY into the follow
 
 ### 3. Long Setup (Bullish Impulse / Demand Absorption)
 - Thesis:
-- Execution Trigger: Limit entry or bullish reclaim at ${fmt(long_entry)}
+- Execution Trigger: Limit entry at ${fmt(long_entry)}
 - Entry Range: ${fmt(long_entry)} - ${fmt(round(long_entry + (0.3 * atr_val), dec))}
 - Stop Loss: ${fmt(long_sl)} (Strict structure invalidation)
 - Take Profit 1: ${fmt(long_tp)}
@@ -505,7 +473,7 @@ Provide an institutional, actionable breakdown formatted EXACTLY into the follow
 
 ### 4. Short Setup (Bearish Mean Reversion / Sweep Absorption)
 - Thesis:
-- Execution Trigger: SFP or Order Block rejection at ${fmt(short_entry)}
+- Execution Trigger: Limit entry or rejection at ${fmt(short_entry)}
 - Entry Range: ${fmt(short_entry)} - ${fmt(round(short_entry + (0.3 * atr_val), dec))}
 - Stop Loss: ${fmt(short_sl)}
 - Take Profit 1: ${fmt(short_tp)}
@@ -520,11 +488,11 @@ Provide an institutional, actionable breakdown formatted EXACTLY into the follow
 fallback_ai = f"""
 ### 1. Market Structure & Key Levels
 {selected_symbol} is trading at **${fmt(current_price)} USDT** under the {selected_engine} framework, relative to Session VWAP of **${fmt(vwap_price)} USDT**.
-* **Key Resistance Levels**: ${fmt(overhead_liq[0])}, ${fmt(overhead_liq[1])}, ${fmt(fib_targets['1.000 (C=A)'])}.
-* **Key Support Levels**: ${fmt(downside_liq[0])}, ${fmt(vwap_price)}, ${fmt(downside_liq[2])}.
+* **Key Resistance Levels**: ${fmt(short_entry)}, ${fmt(overhead_liq[1])}, ${fmt(fib_targets['1.000 (C=A)'])}.
+* **Key Support Levels**: ${fmt(long_entry)}, ${fmt(vwap_price)}, ${fmt(downside_liq[2])}.
 
 ### 2. Liquidity & Structural Alignment
-* Structural levels identify key institutional volume zones at **${fmt(overhead_liq[0])}** and **${fmt(downside_liq[0])}**.
+* Structural levels identify key institutional volume zones at **${fmt(short_entry)}** and **${fmt(long_entry)}**.
 
 ### 3. Long Setup (Bullish Impulse / Demand Absorption)
 * **Execution Trigger**: Absorption at **${fmt(long_entry)}**.
