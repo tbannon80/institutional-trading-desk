@@ -18,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- High-Contrast Theme ---
+# --- High-Contrast Adaptive Theme ---
 st.markdown("""
 <style>
     .metric-card {
@@ -214,7 +214,7 @@ def calculate_elliott_targets(df, symbol):
         "Wave B Floor": round(low, decimals)
     }
 
-# --- Guaranteed Resilient Data Fetcher ---
+# --- Multi-Provider Live Feed ---
 @st.cache_data(ttl=5)
 def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -275,7 +275,7 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
     except Exception:
         pass
 
-    # 4. Fail-Safe Synthetic Market Generator (Guarantees df is never None)
+    # 4. Fail-Safe Synthetic Baseline
     dates = pd.date_range(end=datetime.now(timezone.utc), periods=limit, freq='5min')
     base_map = {"BTC": 77077.0, "XAG": 69.571, "ETH": 2387.0, "SOL": 90.35, "XRP": 1.362}
     base = base_map.get(fsym, 70.0)
@@ -297,8 +297,8 @@ st.title("⚡ Institutional Derivatives Execution Terminal")
 col_asset, col_engine, col_tf, col_act = st.columns([3, 3, 2, 1])
 
 assets = {
-    "🪙 Silver (SILVERUSDT)": "XAG/USDT",
     "₿ Bitcoin (BTCUSDT)": "BTC/USDT",
+    "🪙 Silver (SILVERUSDT)": "XAG/USDT",
     "Ξ Ethereum (ETHUSDT)": "ETH/USDT",
     "🟣 Solana (SOLUSDT)": "SOL/USDT",
     "✕ Ripple (XRPUSDT)": "XRP/USDT"
@@ -318,7 +318,7 @@ with col_tf:
     selected_tf = st.radio("Timeframe", ["5m", "15m", "1h", "4h", "1d"], index=0, horizontal=True, label_visibility="collapsed")
 
 with col_act:
-    if st.button("🔄 Refresh", use_container_width=True):
+    if st.button("🔄 Refresh", key="top_refresh_btn", use_container_width=True):
         st.cache_data.clear()
 
 df = fetch_cloud_klines(selected_symbol, tf=selected_tf)
@@ -553,8 +553,15 @@ st.markdown(brief_content)
 
 st.markdown("---")
 
-# --- Dual 1-Click BTCC Order Bridges ---
-st.subheader(f"⚡ Dual BTCC Order Bridges ({selected_symbol})")
+# --- Dual 1-Click BTCC Order Bridges Header with 2nd Refresh Button ---
+col_bridge_hdr, col_bridge_btn = st.columns([3, 1])
+
+with col_bridge_hdr:
+    st.subheader(f"⚡ Dual BTCC Order Bridges ({selected_symbol})")
+
+with col_bridge_btn:
+    if st.button("🔄 Re-Calculate Setup & Pricing", key="bottom_refresh_btn", use_container_width=True):
+        st.cache_data.clear()
 
 col_short, col_long = st.columns(2)
 
