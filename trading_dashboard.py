@@ -158,13 +158,11 @@ def get_smc_structure(df, symbol):
     bull_fvg_boxes = []
     
     for i in range(2, len(df)):
-        # Bearish FVG: Low[i-2] > High[i]
         if df['low'].iloc[i-2] > df['high'].iloc[i]:
             top = df['low'].iloc[i-2]
             bot = df['high'].iloc[i]
             if top > current:
                 bear_fvg_boxes.append((top, bot, df['datetime'].iloc[i-2]))
-        # Bullish FVG: High[i-2] < Low[i]
         if df['high'].iloc[i-2] < df['low'].iloc[i]:
             top = df['low'].iloc[i]
             bot = df['high'].iloc[i-2]
@@ -205,7 +203,7 @@ def get_smc_structure(df, symbol):
 
     return overhead, downside, decimals, (primary_supply_top, primary_supply_bot), (primary_demand_top, primary_demand_bot), eq_level, bos_markers[-3:]
 
-# --- Proprietary Fractal Matrix Engine ---
+# --- Proprietary Tactical Fractal Engine ---
 def get_tactical_liquidity_matrix(df, symbol):
     current = df['close'].iloc[-1]
     atr = max(df['atr'].iloc[-1], current * 0.006)
@@ -242,11 +240,11 @@ def calculate_elliott_targets(df, symbol):
 
 # --- Cloud Data Fetcher ---
 @st.cache_data(ttl=15)
-def fetch_cloud_klines(symbol="BTC/USDT", tf="1h", limit=60):
+def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
     granularity_map = {"5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
-    granularity = granularity_map.get(tf.lower(), 3600)
+    granularity = granularity_map.get(tf.lower(), 300)
     
-    # 1. Silver (XAG) Real Spot Feeds (~$70/oz)
+    # 1. Silver (XAG) Real Spot Feeds (~$68-$72/oz)
     if "XAG" in symbol:
         try:
             exchange = ccxt.kraken({'enableRateLimit': True})
@@ -257,9 +255,9 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="1h", limit=60):
         except Exception:
             pass
         dates = pd.date_range(end=datetime.now(timezone.utc), periods=limit, freq=tf.replace('m','min').replace('d','D'))
-        base = 70.35
-        prices = base + np.cumsum(np.random.normal(0, 0.18, limit))
-        df = pd.DataFrame({'datetime': dates, 'open': prices, 'high': prices + 0.35, 'low': prices - 0.35, 'close': prices, 'volume': np.random.uniform(5000, 20000, limit)})
+        base = 71.75
+        prices = base + np.cumsum(np.random.normal(0, 0.12, limit))
+        df = pd.DataFrame({'datetime': dates, 'open': prices, 'high': prices + 0.28, 'low': prices - 0.28, 'close': prices, 'volume': np.random.uniform(5000, 20000, limit)})
         return calculate_indicators(df)
 
     # 2. Crypto Assets via Coinbase
@@ -281,7 +279,7 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="1h", limit=60):
 
     # 3. Bybit Derivatives Fallback
     bybit_tf_map = {"5m": "5", "15m": "15", "1h": "60", "4h": "240", "1d": "D"}
-    bybit_tf = bybit_tf_map.get(tf.lower(), "60")
+    bybit_tf = bybit_tf_map.get(tf.lower(), "5")
     try:
         raw_sym = symbol.replace("/", "")
         url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={raw_sym}&interval={bybit_tf}&limit={limit}"
@@ -309,7 +307,7 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="1h", limit=60):
 
     # 5. Baseline Fallback
     dates = pd.date_range(end=datetime.now(timezone.utc), periods=limit, freq=tf.replace('m','min').replace('d','D'))
-    base_map = {"BTC/USDT": 76950.0, "ETH/USDT": 2375.0, "SOL/USDT": 90.35, "XRP/USDT": 1.36, "XAG/USDT": 70.35}
+    base_map = {"BTC/USDT": 77280.0, "ETH/USDT": 2375.0, "SOL/USDT": 90.35, "XRP/USDT": 1.36, "XAG/USDT": 71.75}
     base = base_map.get(symbol, 100.0)
     prices = base + np.cumsum(np.random.normal(0, base * 0.002, limit))
     df = pd.DataFrame({'datetime': dates, 'open': prices, 'high': prices * 1.004, 'low': prices * 0.996, 'close': prices, 'volume': np.random.uniform(500, 2000, limit)})
@@ -332,15 +330,15 @@ with col_asset:
     selected_asset_label = st.selectbox("Select Asset", list(assets.keys()), label_visibility="collapsed")
     selected_symbol = assets[selected_asset_label]
 
-# DEFAULTS TO LUXALGO SMC (Index 0)
 with col_engine:
     selected_engine = st.selectbox("Strategy Engine", [
         "🏛️ LuxAlgo Smart Money Concepts (SMC / FVG Benchmark)",
         "⚡ Tactical Fractal Matrix (Proprietary Swing)"
     ], index=0, label_visibility="collapsed")
 
+# DEFAULTS DIRECTLY TO 5M (Index 0)
 with col_tf:
-    selected_tf = st.radio("Timeframe", ["5m", "15m", "1h", "4h", "1d"], index=2, horizontal=True, label_visibility="collapsed")
+    selected_tf = st.radio("Timeframe", ["5m", "15m", "1h", "4h", "1d"], index=0, horizontal=True, label_visibility="collapsed")
 
 with col_act:
     if st.button("🔄 Refresh", use_container_width=True):
@@ -417,7 +415,6 @@ with col_chart:
 
     # LuxAlgo Shaded Order Block & FVG Bands
     if is_smc and supply_box and demand_box:
-        # Bearish Supply / Order Block Zone (Red Shaded Band)
         fig.add_hrect(
             y0=supply_box[1], y1=supply_box[0],
             fillcolor="rgba(255, 82, 82, 0.18)", line_color="#ff5252",
@@ -425,7 +422,6 @@ with col_chart:
             annotation_text="Bearish Order Block / Supply Zone", annotation_position="top left",
             row=1, col=1
         )
-        # Bullish Demand / Order Block Zone (Green Shaded Band)
         fig.add_hrect(
             y0=demand_box[1], y1=demand_box[0],
             fillcolor="rgba(0, 230, 118, 0.18)", line_color="#00e676",
@@ -433,13 +429,11 @@ with col_chart:
             annotation_text="Bullish Order Block / Demand Zone", annotation_position="bottom left",
             row=1, col=1
         )
-        # Equilibrium Midpoint (50% Premium/Discount baseline)
         if eq_level:
             fig.add_hline(
                 y=eq_level, line_dash="dot", line_color="#9e9e9e",
                 annotation_text="50% Equilibrium (Discount / Premium Threshold)", row=1, col=1
             )
-        # In-Chart BOS / CHoCH text annotations
         for b_time, b_price, b_label, b_col in bos_marks:
             fig.add_annotation(
                 x=b_time, y=b_price, text=b_label,
