@@ -592,3 +592,69 @@ with col_long:
         st.markdown("**📋 1. Click icon in code block to copy LONG payload:**")
         st.code(json.dumps(long_payload), language="json")
         st.caption("👉 Then switch to your BTCC tab and click **⚡ Fill BTCC Ticket** on your bookmarks bar.")
+# --- DUAL-COLUMN TACTICAL PLAYBOOK ---
+st.divider()
+st.markdown("### 📋 TACTICAL EXECUTION PLAYBOOK")
+
+col_bull, col_bear = st.columns(2)
+
+# --- BULLISH PLAN ---
+with col_bull:
+    st.markdown("### 🟢 BULLISH PLAN")
+    st.markdown("""
+    **THESIS:**  
+    Holding above the local demand floor and defending equilibrium opens the path toward the upper supply zone.
+    
+    **BULLISH TRIGGER SETUP:**  
+    * 🟩 Defend the primary demand order block.
+    * 🟩 Reclaim and hold structural equilibrium.
+    * 🟩 Break and hold above local resistance for momentum confirmation.
+    
+    **UPSIDE ROADMAP:**  
+    `Equilibrium` $\rightarrow$ `Primary Supply / OB` $\rightarrow$ `Macro Rejection / Fib Extension`
+    """)
+    
+    st.markdown("#### **Bullish Execution Ladder**")
+    bull_ladder = {
+        "Target": ["TP1 (EQ Test)", "TP2 (Supply Tap)", "TP3 (Fib Extension)"],
+        "Action": ["Scale Out 30%", "Scale Out 40%", "Runner Target"],
+        "Purpose": ["Secure quick profit", "Lock risk-free", "Capture macro expansion"]
+    }
+    st.table(bull_ladder)
+    
+    st.warning("⚠️ **Invalidation:** Clean break, retest, and loss of the Discount Floor support level.")
+
+# --- BEARISH PLAN ---
+with col_bear:
+    st.markdown("### 🔴 BEARISH PLAN")
+    st.markdown("""
+    **THESIS:**  
+    Rejection at the upper supply zone or failure to hold equilibrium increases the probability of a sweep down to macro demand.
+    
+    **BEARISH TRIGGER SETUP:**  
+    * ❌ Rejection wick at the Bearish Order Block / Supply Zone.
+    * ❌ Loss of local structural support.
+    * ❌ Confirmed breakdown of CVD delta.
+    
+    **DOWNSIDE ROADMAP:**  
+    `Supply Rejection` $\rightarrow$ `Equilibrium` $\rightarrow$ `Discount Floor / Demand Zone`
+    """)
+    
+    st.markdown("#### **Bearish Execution Ladder**")
+    bear_ladder = {
+        "Target": ["Entry (Supply Tap)", "TP1 (Mid-Range EQ)", "TP2 (Demand Floor)"],
+        "Action": ["Open Short", "Take Profit 1", "Full Exit / Reverse"],
+        "Purpose": ["Initial rejection", "Secure baseline", "Target liquidity pool"]
+    }
+    st.table(bear_ladder)
+    
+    st.error("⚠️ **Invalidation:** Clean break and hold above the BOS Invalidation level.")
+
+# --- FOOTER RISK MANAGEMENT ---
+st.divider()
+st.markdown("""
+### 🛡️ RISK MANAGEMENT & EXECUTION RULES
+* **Risk Parameters:** Risk strictly 1–2% of total account capital per leveraged setup.
+* **Stop Loss Placement:** Always anchor stops outside structural supply/demand boundaries or recent liquidation wicks.
+* **Discipline:** Avoid forcing trades in the choppy middle of the range; wait for the outer boundaries to trigger.
+""")
