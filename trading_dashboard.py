@@ -147,17 +147,16 @@ def calculate_indicators(df):
     df['sma200'] = df['close'].rolling(window=min(len(df), 200), min_periods=5).mean()
     return df
 
-# --- Dynamic Tactical Liquidity Matrix (Fixes Stale Base-Rally Anchors) ---
+# --- Dynamic Tactical Liquidity Matrix ---
 def get_liquidity_matrix(df):
     current = df['close'].iloc[-1]
     vwap = df['vwap'].iloc[-1]
     
-    # 1. Overhead Liquidity (Immediate Resistance & Local Wicks)
+    # Overhead Liquidity (Immediate Resistance & Local Wicks)
     recent_highs = sorted([h for h in df['high'].tail(24).unique() if h > current])
     if len(recent_highs) >= 3:
         overhead = [round(recent_highs[0], 2), round(recent_highs[1], 2), round(recent_highs[-1], 2)]
     else:
-        # Volatility expansion projection
         high_anchor = df['high'].max()
         overhead = [
             round(max(high_anchor, current * 1.008), 2),
@@ -165,18 +164,14 @@ def get_liquidity_matrix(df):
             round(max(high_anchor * 1.035, current * 1.045), 2)
         ]
 
-    # 2. Downside Tactical Liquidity (Recent 12-bar swing lows + VWAP pullbacks, NOT 3-day old bottoms)
+    # Downside Tactical Liquidity (Recent 18-bar local swing lows)
     recent_tail_lows = sorted([l for l in df['low'].tail(18).unique() if l < current], reverse=True)
     
-    # Target 1: Immediate local dip / order block (0.5% - 1.5% below spot)
     t1 = round(recent_tail_lows[0], 2) if recent_tail_lows else round(current * 0.992, 2)
-    if (current - t1) / current > 0.035: # If gap is wider than 3.5%, create dynamic local shelf
+    if (current - t1) / current > 0.035:
         t1 = round(current * 0.991, 2)
         
-    # Target 2: Session VWAP Anchor or second structural shelf
     t2 = round(vwap, 2) if vwap < current and (current - vwap) / current < 0.05 else round(t1 * 0.988, 2)
-    
-    # Target 3: Structural Wave Invalidation floor
     t3 = round(recent_tail_lows[-1], 2) if len(recent_tail_lows) > 1 else round(t2 * 0.985, 2)
     
     downside = [t1, t2, t3]
@@ -184,7 +179,7 @@ def get_liquidity_matrix(df):
 
 def calculate_elliott_targets(df):
     high = df['high'].max()
-    low = df['low'].tail(24).min() # Anchor wave to recent consolidation impulse
+    low = df['low'].tail(24).min()
     diff = high - low
     return {
         "1.000 (C=A)": round(high + (diff * 0.382), 2),
@@ -194,7 +189,7 @@ def calculate_elliott_targets(df):
         "Wave B Invalidation": round(low, 2)
     }
 
-# --- Cloud Data Fetcher ---
+# --- Cloud Kline Fetcher ---
 @st.cache_data(ttl=15)
 def fetch_cloud_klines(symbol="BTC/USDT", tf="1h", limit=60):
     granularity_map = {"5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
@@ -243,7 +238,7 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="1h", limit=60):
         pass
 
     dates = pd.date_range(end=datetime.now(timezone.utc), periods=limit, freq='h')
-    base = 76800.0 if "BTC" in symbol else 2600.0
+    base = 76690.0 if "BTC" in symbol else 2600.0
     prices = base + np.cumsum(np.random.normal(0, base * 0.002, limit))
     df = pd.DataFrame({'datetime': dates, 'open': prices, 'high': prices * 1.003, 'low': prices * 0.997, 'close': prices, 'volume': np.random.uniform(500, 2000, limit)})
     return calculate_indicators(df)
@@ -285,7 +280,6 @@ sma_val = last_row['sma200']
 overhead_liq, downside_liq = get_liquidity_matrix(df)
 fib_targets = calculate_elliott_targets(df)
 
-# Fetch Macro DXY / Secondary RSI context
 dxy_synthetic = 98.88
 rsi_4h_approx = round(min(95.0, rsi * 1.15), 1) if rsi > 50 else round(max(15.0, rsi * 0.85), 1)
 
@@ -456,18 +450,25 @@ st.markdown(brief_content)
 
 st.markdown("---")
 
-# --- Dual 1-Click BTCC Order Bridges with Payload Copy ---
+# --- Dual 1-Click BTCC Order Bridges (Dynamic Keys Fix) ---
 st.subheader(f"⚡ Dual BTCC Order Bridges ({selected_symbol})")
 
 col_short, col_long = st.columns(2)
 
+# Dynamic Key prefix to force Streamlit widgets to rebind when asset/tf/targets update
+key_pfx = f"{selected_symbol}_{selected_tf}_{overhead_liq[0]}_{downside_liq[0]}"
+
 # --- SHORT BRIDGE ---
 with col_short:
     with st.expander("🔴 SHORT Execution Setup (Sell / Mean Reversion)", expanded=True):
-        s_entry = st.number_input("Limit Entry ($)", value=float(overhead_liq[0]), key="s_entry")
-        s_tp = st.number_input("Take Profit Target ($)", value=float(vwap_price if vwap_price < overhead_liq[0] else downside_liq[0]), key="s_tp")
-        s_sl = st.number_input("Stop Loss Target ($)", value=float(round(overhead_liq[0] * 1.015, 2)), key="s_sl")
-        s_lev = st.slider("Leverage Target", 1, 100, 20, key="s_lev")
+        default_s_entry = float(overhead_liq[0])
+        default_s_tp = float(vwap_price if vwap_price < overhead_liq[0] else downside_liq[0])
+        default_s_sl = float(round(overhead_liq[0] * 1.015, 2))
+
+        s_entry = st.number_input("Limit Entry ($)", value=default_s_entry, key=f"s_e_{key_pfx}")
+        s_tp = st.number_input("Take Profit Target ($)", value=default_s_tp, key=f"s_tp_{key_pfx}")
+        s_sl = st.number_input("Stop Loss Target ($)", value=default_s_sl, key=f"s_sl_{key_pfx}")
+        s_lev = st.slider("Leverage Target", 1, 100, 20, key=f"s_lev_{key_pfx}")
 
         s_risk = abs(s_entry - s_sl)
         s_rew = abs(s_entry - s_tp)
@@ -490,10 +491,14 @@ with col_short:
 # --- LONG BRIDGE ---
 with col_long:
     with st.expander("🟢 LONG Execution Setup (Buy / Trend Continuation)", expanded=True):
-        l_entry = st.number_input("Limit Entry ($)", value=float(downside_liq[0]), key="l_entry")
-        l_tp = st.number_input("Take Profit Target ($)", value=float(overhead_liq[0]), key="l_tp")
-        l_sl = st.number_input("Stop Loss Target ($)", value=float(round(downside_liq[0] * 0.985, 2)), key="l_sl")
-        l_lev = st.slider("Leverage Target", 1, 100, 20, key="l_lev")
+        default_l_entry = float(downside_liq[0])
+        default_l_tp = float(overhead_liq[0])
+        default_l_sl = float(round(downside_liq[0] * 0.985, 2))
+
+        l_entry = st.number_input("Limit Entry ($)", value=default_l_entry, key=f"l_e_{key_pfx}")
+        l_tp = st.number_input("Take Profit Target ($)", value=default_l_tp, key=f"l_tp_{key_pfx}")
+        l_sl = st.number_input("Stop Loss Target ($)", value=default_l_sl, key=f"l_sl_{key_pfx}")
+        l_lev = st.slider("Leverage Target", 1, 100, 20, key=f"l_lev_{key_pfx}")
 
         l_risk = abs(l_entry - l_sl)
         l_rew = abs(l_entry - l_tp)
