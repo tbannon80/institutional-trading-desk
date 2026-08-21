@@ -602,15 +602,15 @@ with col_bull:
     st.markdown("### 🟢 BULLISH PLAN")
     st.markdown(f"""
     **THESIS:**  
-    Holding above the local demand floor (**{primary_demand_val}**) and defending equilibrium (**{eq_display}**) opens the path toward upper supply.
+    Holding above the local demand floor ({primary_demand_val}) and defending equilibrium ({eq_display}) opens the path toward upper supply.
     
     **BULLISH TRIGGER SETUP:**  
-    * 🟩 Defend primary demand order block at **{primary_demand_val}**.
-    * 🟩 Reclaim and hold structural equilibrium at **{eq_display}**.
+    * 🟩 Defend primary demand order block at {primary_demand_val}.
+    * 🟩 Reclaim and hold structural equilibrium at {eq_display}.
     * 🟩 Break and hold above local resistance for momentum confirmation.
     
     **UPSIDE ROADMAP:**  
-    `EQ: {eq_display}` $\rightarrow$ `Supply: {primary_supply_val}` $\rightarrow$ `Fib Ext: {fib_ext_val}`
+    `EQ: {eq_display}` -> `Supply: {primary_supply_val}` -> `Fib Ext: {fib_ext_val}`
     """)
     
     st.markdown("#### **Bullish Execution Ladder**")
@@ -621,21 +621,21 @@ with col_bull:
     }
     st.table(bull_ladder)
     
-    st.warning(f"⚠️ **Invalidation:** Clean break, retest, and loss of the Discount Floor support level at **{discount_floor_val}**.")
+    st.warning(f"⚠️ **Invalidation:** Clean break, retest, and loss of the Discount Floor support level at {discount_floor_val}.")
 
 with col_bear:
     st.markdown("### 🔴 BEARISH PLAN")
     st.markdown(f"""
     **THESIS:**  
-    Rejection at the upper supply zone (**{primary_supply_val}**) or failure to hold equilibrium increases the probability of a sweep down to macro demand.
+    Rejection at the upper supply zone ({primary_supply_val}) or failure to hold equilibrium increases the probability of a sweep down to macro demand.
     
     **BEARISH TRIGGER SETUP:**  
-    * ❌ Rejection wick at the Bearish Supply Zone (**{primary_supply_val}**).
-    * ❌ Loss of local structural support and equilibrium (**{eq_display}**).
+    * ❌ Rejection wick at the Bearish Supply Zone ({primary_supply_val}).
+    * ❌ Loss of local structural support and equilibrium ({eq_display}).
     * ❌ Confirmed breakdown of CVD delta.
     
     **DOWNSIDE ROADMAP:**  
-    `Supply: {primary_supply_val}` $\rightarrow$ `EQ: {eq_display}` $\rightarrow$ `Demand Floor: {discount_floor_val}`
+    `Supply: {primary_supply_val}` -> `EQ: {eq_display}` -> `Demand Floor: {discount_floor_val}`
     """)
     
     st.markdown("#### **Bearish Execution Ladder**")
@@ -646,7 +646,7 @@ with col_bear:
     }
     st.table(bear_ladder)
     
-    st.error(f"⚠️ **Invalidation:** Clean break and hold above the BOS Invalidation level at **{bos_invalidation_val}**.")
+    st.error(f"⚠️ **Invalidation:** Clean break and hold above the BOS Invalidation level at {bos_invalidation_val}.")
 
 st.divider()
 st.markdown("""
