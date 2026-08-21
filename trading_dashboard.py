@@ -216,28 +216,6 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     fsym = "BTC" if "BTC" in symbol else ("ETH" if "ETH" in symbol else ("SOL" if "SOL" in symbol else ("XRP" if "XRP" in symbol else "XAG")))
     
-    live_price = None
-    if fsym == "XAG":
-        try:
-            r = requests.get("https://fapi.binance.com/fapi/v1/ticker/price?symbol=XAGUSDT", headers=headers, timeout=2).json()
-            if r.get('price'): live_price = float(r['price'])
-        except Exception:
-            pass
-        if not live_price:
-            try:
-                r = requests.get("https://api.kraken.com/0/public/Ticker?pair=XAGUSD", headers=headers, timeout=2).json()
-                if r.get('result', {}).get('XAGUSD'):
-                    live_price = float(r['result']['XAGUSD']['c'][0])
-            except Exception:
-                pass
-    else:
-        try:
-            cb_pair = f"{fsym}-USD"
-            r = requests.get(f"https://api.coinbase.com/v2/prices/{cb_pair}/spot", headers=headers, timeout=2).json()
-            if r.get('data', {}).get('amount'): live_price = float(r['data']['amount'])
-        except Exception:
-            pass
-
     df = None
     try:
         agg = 5 if tf == "5m" else (15 if tf == "15m" else 60)
@@ -255,18 +233,13 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
 
     if df is None:
         dates = pd.date_range(end=datetime.now(timezone.utc), periods=limit, freq='5min')
-        base = live_price if live_price else (69.34 if fsym == "XAG" else 77644.0)
-        spread = 0.08 if fsym == "XAG" else (base * 0.001)
+        base = 77644.0
+        spread = base * 0.001
         prices = base + np.cumsum(np.random.normal(0, spread * 0.5, limit))
         df = pd.DataFrame({'timestamp': dates.astype(int) // 10**9, 'open': prices, 'high': prices + spread, 'low': prices - spread, 'close': prices, 'volume': np.random.uniform(500, 2000, limit)})
 
-    # Robust offset conversion to Central Time (CDT UTC-5) without zoneinfo dependencies
+    # Clean offset conversion to Central Time (CDT UTC-5)
     df['datetime'] = pd.to_datetime(df['timestamp'], unit='s') - pd.Timedelta(hours=5)
-
-    if live_price:
-        df.iloc[-1, df.columns.get_loc('close')] = live_price
-        df.iloc[-1, df.columns.get_loc('high')] = max(df.iloc[-1]['high'], live_price)
-        df.iloc[-1, df.columns.get_loc('low')] = min(df.iloc[-1]['low'], live_price)
 
     return calculate_indicators(df)
 
