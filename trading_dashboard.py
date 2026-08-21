@@ -147,7 +147,65 @@ def calculate_indicators(df):
     df['sma200'] = df['close'].rolling(window=min(len(df), 200), min_periods=5).mean()
     return df
 
-# --- ENGINE 1: Tactical Fractal Liquidity Engine ---
+# --- LuxAlgo Smart Money Concepts (SMC) Architecture ---
+def get_smc_structure(df, symbol):
+    current = df['close'].iloc[-1]
+    atr = max(df['atr'].iloc[-1], current * 0.006)
+    decimals = 4 if "XRP" in symbol else (2 if "SOL" in symbol or "XAG" in symbol or "ETH" in symbol else 1)
+    
+    # 1. Detect Fair Value Gaps (3-bar imbalances)
+    bear_fvg_boxes = []
+    bull_fvg_boxes = []
+    
+    for i in range(2, len(df)):
+        # Bearish FVG: Low[i-2] > High[i]
+        if df['low'].iloc[i-2] > df['high'].iloc[i]:
+            top = df['low'].iloc[i-2]
+            bot = df['high'].iloc[i]
+            if top > current:
+                bear_fvg_boxes.append((top, bot, df['datetime'].iloc[i-2]))
+        # Bullish FVG: High[i-2] < Low[i]
+        if df['high'].iloc[i-2] < df['low'].iloc[i]:
+            top = df['low'].iloc[i]
+            bot = df['high'].iloc[i-2]
+            if bot < current:
+                bull_fvg_boxes.append((top, bot, df['datetime'].iloc[i-2]))
+
+    # 2. Unmitigated Order Blocks (OB)
+    ob_high = df['high'].tail(20).max()
+    ob_low = df['low'].tail(20).min()
+    
+    if bear_fvg_boxes:
+        primary_supply_top, primary_supply_bot, _ = bear_fvg_boxes[-1]
+    else:
+        primary_supply_bot = max(ob_high * 0.998, current + (1.1 * atr))
+        primary_supply_top = primary_supply_bot + (0.8 * atr)
+        
+    if bull_fvg_boxes:
+        primary_demand_top, primary_demand_bot, _ = bull_fvg_boxes[-1]
+    else:
+        primary_demand_top = min(ob_low * 1.002, current - (1.1 * atr))
+        primary_demand_bot = primary_demand_top - (0.8 * atr)
+
+    overhead = [round(primary_supply_bot, decimals), round(primary_supply_top, decimals), round(primary_supply_top + (1.2 * atr), decimals)]
+    downside = [round(primary_demand_top, decimals), round(primary_demand_bot, decimals), round(primary_demand_bot - (1.2 * atr), decimals)]
+    
+    # Equilibrium (50% Premium / Discount midpoint)
+    range_max = df['high'].tail(30).max()
+    range_min = df['low'].tail(30).min()
+    eq_level = round((range_max + range_min) / 2.0, decimals)
+
+    # Detect Structure Breaks (BOS / CHoCH markers)
+    bos_markers = []
+    for i in range(5, len(df)):
+        if df['close'].iloc[i] > df['high'].iloc[i-5:i].max():
+            bos_markers.append((df['datetime'].iloc[i], df['high'].iloc[i], "BOS ▲", "#00e676"))
+        elif df['close'].iloc[i] < df['low'].iloc[i-5:i].min():
+            bos_markers.append((df['datetime'].iloc[i], df['low'].iloc[i], "CHoCH ▼", "#ff5252"))
+
+    return overhead, downside, decimals, (primary_supply_top, primary_supply_bot), (primary_demand_top, primary_demand_bot), eq_level, bos_markers[-3:]
+
+# --- Proprietary Fractal Matrix Engine ---
 def get_tactical_liquidity_matrix(df, symbol):
     current = df['close'].iloc[-1]
     atr = max(df['atr'].iloc[-1], current * 0.006)
@@ -165,45 +223,6 @@ def get_tactical_liquidity_matrix(df, symbol):
     p1_downside = vwap if (current - vwap) > (0.8 * atr) else max(range_low, current - (1.2 * atr))
     p2_downside = p1_downside - (1.0 * atr)
     p3_downside = max(range_low - (0.5 * atr), p2_downside - (1.5 * atr))
-    downside = [round(p1_downside, decimals), round(p2_downside, decimals), round(p3_downside, decimals)]
-    
-    return overhead, downside, decimals
-
-# --- ENGINE 2: LuxAlgo Smart Money Concepts (SMC / FVG / BOS) Engine ---
-def get_smc_liquidity_matrix(df, symbol):
-    current = df['close'].iloc[-1]
-    atr = max(df['atr'].iloc[-1], current * 0.006)
-    decimals = 4 if "XRP" in symbol else (2 if "SOL" in symbol or "XAG" in symbol or "ETH" in symbol else 1)
-    
-    # 1. Detect Fair Value Gaps (FVG)
-    # Bearish FVG: Low of candle[i-2] > High of candle[i]
-    bear_fvg = []
-    for i in range(2, len(df)):
-        if df['low'].iloc[i-2] > df['high'].iloc[i]:
-            gap_mid = (df['low'].iloc[i-2] + df['high'].iloc[i]) / 2.0
-            if gap_mid > current:
-                bear_fvg.append(gap_mid)
-                
-    # Bullish FVG: High of candle[i-2] < Low of candle[i]
-    bull_fvg = []
-    for i in range(2, len(df)):
-        if df['high'].iloc[i-2] < df['low'].iloc[i]:
-            gap_mid = (df['high'].iloc[i-2] + df['low'].iloc[i]) / 2.0
-            if gap_mid < current:
-                bull_fvg.append(gap_mid)
-
-    # 2. SMC Order Block (OB) & Break of Structure (BOS) Levels
-    ob_high = df['high'].tail(15).max()
-    ob_low = df['low'].tail(15).min()
-    
-    p1_overhead = bear_fvg[-1] if bear_fvg else max(ob_high, current + (1.1 * atr))
-    p2_overhead = max(ob_high, p1_overhead + (0.9 * atr))
-    p3_overhead = p2_overhead + (1.4 * atr)
-    overhead = [round(p1_overhead, decimals), round(p2_overhead, decimals), round(p3_overhead, decimals)]
-
-    p1_downside = bull_fvg[-1] if bull_fvg else min(ob_low, current - (1.1 * atr))
-    p2_downside = min(ob_low, p1_downside - (0.9 * atr))
-    p3_downside = p2_downside - (1.4 * atr)
     downside = [round(p1_downside, decimals), round(p2_downside, decimals), round(p3_downside, decimals)]
     
     return overhead, downside, decimals
@@ -290,7 +309,7 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="1h", limit=60):
 
     # 5. Baseline Fallback
     dates = pd.date_range(end=datetime.now(timezone.utc), periods=limit, freq=tf.replace('m','min').replace('d','D'))
-    base_map = {"BTC/USDT": 76750.0, "ETH/USDT": 2375.0, "SOL/USDT": 90.35, "XRP/USDT": 1.36, "XAG/USDT": 70.35}
+    base_map = {"BTC/USDT": 76950.0, "ETH/USDT": 2375.0, "SOL/USDT": 90.35, "XRP/USDT": 1.36, "XAG/USDT": 70.35}
     base = base_map.get(symbol, 100.0)
     prices = base + np.cumsum(np.random.normal(0, base * 0.002, limit))
     df = pd.DataFrame({'datetime': dates, 'open': prices, 'high': prices * 1.004, 'low': prices * 0.996, 'close': prices, 'volume': np.random.uniform(500, 2000, limit)})
@@ -313,10 +332,11 @@ with col_asset:
     selected_asset_label = st.selectbox("Select Asset", list(assets.keys()), label_visibility="collapsed")
     selected_symbol = assets[selected_asset_label]
 
+# DEFAULTS TO LUXALGO SMC (Index 0)
 with col_engine:
     selected_engine = st.selectbox("Strategy Engine", [
-        "⚡ Tactical Fractal Matrix (Proprietary)",
-        "🏛️ LuxAlgo Smart Money Concepts (SMC/FVG Benchmark)"
+        "🏛️ LuxAlgo Smart Money Concepts (SMC / FVG Benchmark)",
+        "⚡ Tactical Fractal Matrix (Proprietary Swing)"
     ], index=0, label_visibility="collapsed")
 
 with col_tf:
@@ -336,13 +356,15 @@ rsi = last_row['rsi']
 atr_val = last_row['atr']
 sma_val = last_row['sma200']
 
-# Route between the two strategy engines
-if "LuxAlgo" in selected_engine:
-    overhead_liq, downside_liq, dec = get_smc_liquidity_matrix(df, selected_symbol)
-    engine_badge = "SMC / FVG Benchmark"
+# Route logic
+is_smc = "LuxAlgo" in selected_engine
+if is_smc:
+    overhead_liq, downside_liq, dec, supply_box, demand_box, eq_level, bos_marks = get_smc_structure(df, selected_symbol)
+    engine_badge = "SMC / FVG Native"
 else:
     overhead_liq, downside_liq, dec = get_tactical_liquidity_matrix(df, selected_symbol)
     engine_badge = "Fractal Liquidity Engine"
+    supply_box, demand_box, eq_level, bos_marks = None, None, None, []
 
 fib_targets = calculate_elliott_targets(df, selected_symbol)
 dxy_synthetic = 98.88
@@ -361,7 +383,7 @@ m1.markdown(f"<div class='metric-card'><div class='metric-label'>Spot Price</div
 m2.markdown(f"<div class='metric-card'><div class='metric-label'>ATR Buffer</div><div class='metric-val'>${fmt(atr_val)}</div><div class='metric-sub'>Volatility Range</div></div>", unsafe_allow_html=True)
 m3.markdown(f"<div class='metric-card'><div class='metric-label'>RSI ({selected_tf}/4H)</div><div class='metric-val'>{rsi:.1f}/{rsi_4h_approx}</div><div class='metric-sub'>Confluence</div></div>", unsafe_allow_html=True)
 m4.markdown(f"<div class='metric-card'><div class='metric-label'>Session VWAP</div><div class='metric-val'>${fmt(vwap_price)}</div><div class='metric-sub'>Fair Value Anchor</div></div>", unsafe_allow_html=True)
-m5.markdown(f"<div class='metric-card'><div class='metric-label'>Active Engine</div><div class='metric-val' style='font-size:1.05rem;'>{'LuxAlgo SMC' if 'LuxAlgo' in selected_engine else 'Fractal V3'}</div><div class='metric-sub'>{engine_badge}</div></div>", unsafe_allow_html=True)
+m5.markdown(f"<div class='metric-card'><div class='metric-label'>Active Engine</div><div class='metric-val' style='font-size:1.05rem;'>{'LuxAlgo SMC' if is_smc else 'Fractal V3'}</div><div class='metric-sub'>{engine_badge}</div></div>", unsafe_allow_html=True)
 m6.markdown(f"<div class='metric-card'><div class='metric-label'>CVD Flow</div><div class='metric-val'>{'Bullish Accum' if df['cvd'].iloc[-1] > df['cvd'].iloc[-4] else 'Bearish Dist'}</div><div class='metric-sub'>Delta Flow</div></div>", unsafe_allow_html=True)
 m7.markdown(f"<div class='metric-card'><div class='metric-label'>Structure Regime</div><div class='metric-val'>{'Overextended' if rsi > 70 else ('Oversold' if rsi < 30 else 'Range Rotation')}</div><div class='metric-sub'>Market Cycle</div></div>", unsafe_allow_html=True)
 
@@ -378,6 +400,7 @@ with col_chart:
         row_heights=[0.75, 0.25]
     )
 
+    # OHLC Candlestick
     fig.add_trace(go.Candlestick(
         x=df['datetime'],
         open=df['open'], high=df['high'], low=df['low'], close=df['close'],
@@ -385,15 +408,50 @@ with col_chart:
         increasing_line_color='#00ff88', decreasing_line_color='#ff3366'
     ), row=1, col=1)
 
+    # Session VWAP
     fig.add_trace(go.Scatter(
         x=df['datetime'], y=df['vwap'],
         mode='lines', line=dict(color='#00bcd4', width=2),
         name=f"{selected_tf.upper()} VWAP"
     ), row=1, col=1)
 
-    fig.add_hline(y=overhead_liq[0], line_dash="dash", line_color="#ff5252", annotation_text=f"{'SMC Bearish FVG / OB' if 'LuxAlgo' in selected_engine else 'Overhead Sweep Pivot'}", row=1, col=1)
-    fig.add_hline(y=downside_liq[0], line_dash="dash", line_color="#00e676", annotation_text=f"{'SMC Bullish FVG / OB' if 'LuxAlgo' in selected_engine else 'Downside Demand Pivot'}", row=1, col=1)
+    # LuxAlgo Shaded Order Block & FVG Bands
+    if is_smc and supply_box and demand_box:
+        # Bearish Supply / Order Block Zone (Red Shaded Band)
+        fig.add_hrect(
+            y0=supply_box[1], y1=supply_box[0],
+            fillcolor="rgba(255, 82, 82, 0.18)", line_color="#ff5252",
+            line_width=1, line_dash="solid",
+            annotation_text="Bearish Order Block / Supply Zone", annotation_position="top left",
+            row=1, col=1
+        )
+        # Bullish Demand / Order Block Zone (Green Shaded Band)
+        fig.add_hrect(
+            y0=demand_box[1], y1=demand_box[0],
+            fillcolor="rgba(0, 230, 118, 0.18)", line_color="#00e676",
+            line_width=1, line_dash="solid",
+            annotation_text="Bullish Order Block / Demand Zone", annotation_position="bottom left",
+            row=1, col=1
+        )
+        # Equilibrium Midpoint (50% Premium/Discount baseline)
+        if eq_level:
+            fig.add_hline(
+                y=eq_level, line_dash="dot", line_color="#9e9e9e",
+                annotation_text="50% Equilibrium (Discount / Premium Threshold)", row=1, col=1
+            )
+        # In-Chart BOS / CHoCH text annotations
+        for b_time, b_price, b_label, b_col in bos_marks:
+            fig.add_annotation(
+                x=b_time, y=b_price, text=b_label,
+                showarrow=True, arrowhead=1, arrowcolor=b_col,
+                font=dict(color=b_col, size=11), yshift=10 if "BOS" in b_label else -10,
+                row=1, col=1
+            )
+    else:
+        fig.add_hline(y=overhead_liq[0], line_dash="dash", line_color="#ff5252", annotation_text="Overhead Sweep Pivot", row=1, col=1)
+        fig.add_hline(y=downside_liq[0], line_dash="dash", line_color="#00e676", annotation_text="Downside Demand Pivot", row=1, col=1)
 
+    # CVD Volume Delta
     fig.add_trace(go.Scatter(
         x=df['datetime'], y=df['cvd'],
         mode='lines', line=dict(color='#ffc107', width=1.5),
@@ -414,16 +472,16 @@ with col_chart:
 with col_side:
     st.markdown(f"""
     <div class='side-card'>
-        <div class='card-title-red'>🔴 {'SMC Bearish Order Blocks / FVG' if 'LuxAlgo' in selected_engine else 'Major Overhead Pivot Targets'}</div>
-        <div class='data-row'><span>{'Primary FVG / OB' if 'LuxAlgo' in selected_engine else 'Sweep Pivot 1'}</span><span class='data-row-bold'>${fmt(overhead_liq[0])}</span></div>
-        <div class='data-row'><span>{'BOS Invalidation' if 'LuxAlgo' in selected_engine else 'Expansion Target 2'}</span><span class='data-row-bold'>${fmt(overhead_liq[1])}</span></div>
-        <div class='data-row'><span>{'Macro Rejection' if 'LuxAlgo' in selected_engine else 'Macro Resistance 3'}</span><span class='data-row-bold'>${fmt(overhead_liq[2])}</span></div>
+        <div class='card-title-red'>🔴 {'SMC Bearish Order Blocks / FVG' if is_smc else 'Major Overhead Pivot Targets'}</div>
+        <div class='data-row'><span>{'Primary Supply / OB' if is_smc else 'Sweep Pivot 1'}</span><span class='data-row-bold'>${fmt(overhead_liq[0])}</span></div>
+        <div class='data-row'><span>{'BOS Invalidation' if is_smc else 'Expansion Target 2'}</span><span class='data-row-bold'>${fmt(overhead_liq[1])}</span></div>
+        <div class='data-row'><span>{'Macro Rejection' if is_smc else 'Macro Resistance 3'}</span><span class='data-row-bold'>${fmt(overhead_liq[2])}</span></div>
     </div>
     <div class='side-card'>
-        <div class='card-title-green'>🟢 {'SMC Bullish Order Blocks / FVG' if 'LuxAlgo' in selected_engine else 'Major Downside Pivot Targets'}</div>
-        <div class='data-row'><span>{'Primary FVG / OB' if 'LuxAlgo' in selected_engine else 'Demand Pivot 1'}</span><span class='data-row-bold'>${fmt(downside_liq[0])}</span></div>
-        <div class='data-row'><span>{'CHoCH Support' if 'LuxAlgo' in selected_engine else 'Structural Shelf 2'}</span><span class='data-row-bold'>${fmt(downside_liq[1])}</span></div>
-        <div class='data-row'><span>{'Discount Floor' if 'LuxAlgo' in selected_engine else 'Key Value Floor 3'}</span><span class='data-row-bold'>${fmt(downside_liq[2])}</span></div>
+        <div class='card-title-green'>🟢 {'SMC Bullish Order Blocks / FVG' if is_smc else 'Major Downside Pivot Targets'}</div>
+        <div class='data-row'><span>{'Primary Demand / OB' if is_smc else 'Demand Pivot 1'}</span><span class='data-row-bold'>${fmt(downside_liq[0])}</span></div>
+        <div class='data-row'><span>{'CHoCH Support' if is_smc else 'Structural Shelf 2'}</span><span class='data-row-bold'>${fmt(downside_liq[1])}</span></div>
+        <div class='data-row'><span>{'Discount Floor' if is_smc else 'Key Value Floor 3'}</span><span class='data-row-bold'>${fmt(downside_liq[2])}</span></div>
     </div>
     <div class='side-card'>
         <div class='card-title-cyan'>🌊 Elliott Fibonacci Projections</div>
@@ -453,7 +511,7 @@ l_rew = abs(long_entry - long_tp)
 l_rr = l_rew / (l_risk + 1e-9)
 
 # --- Comprehensive 5-Section Gemini Institutional Brief ---
-st.subheader(f"🤖 Gemini Institutional Strategy Brief ({'LuxAlgo SMC Benchmark' if 'LuxAlgo' in selected_engine else 'Tactical Fractal Matrix'})")
+st.subheader(f"🤖 Gemini Institutional Strategy Brief ({'LuxAlgo SMC Benchmark' if is_smc else 'Tactical Fractal Matrix'})")
 
 prompt_ai = f"""
 You are a senior hedge-fund derivatives execution trader evaluating {selected_symbol} on {selected_tf.upper()} using {selected_engine}:
@@ -461,8 +519,8 @@ You are a senior hedge-fund derivatives execution trader evaluating {selected_sy
 - Session VWAP: ${fmt(vwap_price)} USDT
 - ATR Buffer: ${fmt(atr_val)} USDT
 - RSI ({selected_tf}): {rsi:.1f} | Stoch RSI: {stoch_k:.1f}/{stoch_d:.1f}
-- Overhead Levels ({selected_engine}): {overhead_liq}
-- Downside Levels ({selected_engine}): {downside_liq}
+- Overhead Levels: {overhead_liq}
+- Downside Levels: {downside_liq}
 - Elliott Fibonacci Targets: {fib_targets}
 - Macro Context: DXY {dxy_synthetic}
 
@@ -472,7 +530,7 @@ Provide an institutional, actionable breakdown formatted EXACTLY into the follow
 (Analyze structural trend, price vs Session VWAP, oscillator state, and list exact Key Resistance and Support levels)
 
 ### 2. Liquidity & Structural Alignment
-(Synthesize where resting liquidity/FVGs sit vs major overhead/downside pivot zones)
+(Synthesize where resting liquidity/FVGs sit vs major overhead/downside Order Block zones)
 
 ### 3. Long Setup (Bullish Impulse / Demand Absorption)
 - Thesis:
