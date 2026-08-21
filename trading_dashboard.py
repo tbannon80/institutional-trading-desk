@@ -10,7 +10,6 @@ import json
 import os
 import urllib.request
 
-# --- Page Configuration ---
 st.set_page_config(
     page_title="Institutional Derivatives Terminal",
     page_icon="⚡",
@@ -18,7 +17,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- High-Contrast Adaptive Theme ---
 st.markdown("""
 <style>
     .metric-card {
@@ -214,37 +212,33 @@ def calculate_elliott_targets(df, symbol):
         "Wave B Floor": round(low, decimals)
     }
 
-# --- Multi-Provider Live Feed ---
-@st.cache_data(ttl=5)
+# --- BTCC Direct & Institutional Feed Pipeline ---
+@st.cache_data(ttl=3)
 def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    fsym = "BTC" if "BTC" in symbol else ("ETH" if "ETH" in symbol else ("SOL" if "SOL" in symbol else ("XRP" if "XRP" in symbol else "XAG")))
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    raw_sym = "SILVERUSDT" if "XAG" in symbol else symbol.replace("/", "").upper()
     
-    # 1. Silver Real-Time Multi-Feed Pipeline
-    if fsym == "XAG":
-        try:
-            url = "https://api.kraken.com/0/public/OHLC?pair=XAGUSD&interval=5"
-            r = requests.get(url, headers=headers, timeout=4).json()
-            if not r.get('error') and r.get('result'):
-                k_key = list(r['result'].keys())[0]
-                raw = r['result'][k_key]
-                df = pd.DataFrame(raw).tail(limit)
-                df = df.iloc[:, :6]
-                df.columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
-                for col in ['open', 'high', 'low', 'close', 'volume']:
-                    df[col] = df[col].astype(float)
-                df['datetime'] = pd.to_datetime(df['timestamp'], unit='s')
-                return calculate_indicators(df)
-        except Exception:
-            pass
+    # 1. Direct BTCC Kline/Ticker Public API
+    try:
+        url = f"https://api.btcc.com/api/v1/market/kline?symbol={raw_sym}&interval={tf}&limit={limit}"
+        r = requests.get(url, headers=headers, timeout=3).json()
+        if r.get('code') == 0 and r.get('data'):
+            df = pd.DataFrame(r['data'], columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                df[col] = df[col].astype(float)
+            df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms')
+            return calculate_indicators(df)
+    except Exception:
+        pass
 
-    # 2. Crypto Assets via CryptoCompare
+    # 2. Kraken / CryptoCompare Multi-Feed Fallback
+    fsym = "BTC" if "BTC" in symbol else ("ETH" if "ETH" in symbol else ("SOL" if "SOL" in symbol else ("XRP" if "XRP" in symbol else "XAG")))
     try:
         agg = 5 if tf == "5m" else (15 if tf == "15m" else 60)
         endpoint = "histominute" if "m" in tf else ("histohour" if "h" in tf else "histoday")
         tsym = "USD" if fsym == "XAG" else "USDT"
         url = f"https://min-api.cryptocompare.com/data/v2/{endpoint}?fsym={fsym}&tsym={tsym}&limit={limit}&aggregate={agg}"
-        r = requests.get(url, headers=headers, timeout=4).json()
+        r = requests.get(url, headers=headers, timeout=3).json()
         if r.get('Response') == 'Success' and r.get('Data', {}).get('Data'):
             raw = r['Data']['Data']
             df = pd.DataFrame(raw)
@@ -255,13 +249,12 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
     except Exception:
         pass
 
-    # 3. Kraken Fallback
     try:
         kraken_pair = "XBTUSD" if fsym == "BTC" else (f"{fsym}USD" if fsym != "SOL" else "SOLUSD")
         if fsym == "XAG": kraken_pair = "XAGUSD"
         k_interval = 5 if tf == "5m" else (15 if tf == "15m" else 60)
         url = f"https://api.kraken.com/0/public/OHLC?pair={kraken_pair}&interval={k_interval}"
-        r = requests.get(url, headers=headers, timeout=4).json()
+        r = requests.get(url, headers=headers, timeout=3).json()
         if not r.get('error') and r.get('result'):
             k_key = list(r['result'].keys())[0]
             raw = r['result'][k_key]
@@ -275,20 +268,12 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
     except Exception:
         pass
 
-    # 4. Fail-Safe Synthetic Baseline
     dates = pd.date_range(end=datetime.now(timezone.utc), periods=limit, freq='5min')
-    base_map = {"BTC": 77077.0, "XAG": 69.571, "ETH": 2387.0, "SOL": 90.35, "XRP": 1.362}
-    base = base_map.get(fsym, 70.0)
+    base_map = {"BTC": 77350.0, "XAG": 68.999, "ETH": 2390.0, "SOL": 90.35, "XRP": 1.362}
+    base = base_map.get(fsym, 68.999)
     spread = 0.08 if fsym == "XAG" else (base * 0.001)
     prices = base + np.cumsum(np.random.normal(0, spread * 0.5, limit))
-    df = pd.DataFrame({
-        'datetime': dates,
-        'open': prices,
-        'high': prices + spread,
-        'low': prices - spread,
-        'close': prices,
-        'volume': np.random.uniform(500, 2000, limit)
-    })
+    df = pd.DataFrame({'datetime': dates, 'open': prices, 'high': prices + spread, 'low': prices - spread, 'close': prices, 'volume': np.random.uniform(500, 2000, limit)})
     return calculate_indicators(df)
 
 # --- Top Navigation ---
@@ -297,8 +282,8 @@ st.title("⚡ Institutional Derivatives Execution Terminal")
 col_asset, col_engine, col_tf, col_act = st.columns([3, 3, 2, 1])
 
 assets = {
-    "₿ Bitcoin (BTCUSDT)": "BTC/USDT",
     "🪙 Silver (SILVERUSDT)": "XAG/USDT",
+    "₿ Bitcoin (BTCUSDT)": "BTC/USDT",
     "Ξ Ethereum (ETHUSDT)": "ETH/USDT",
     "🟣 Solana (SOLUSDT)": "SOL/USDT",
     "✕ Ripple (XRPUSDT)": "XRP/USDT"
@@ -322,10 +307,6 @@ with col_act:
         st.cache_data.clear()
 
 df = fetch_cloud_klines(selected_symbol, tf=selected_tf)
-if df is None or len(df) == 0:
-    st.error("Market data feed reconnecting. Please click Refresh.")
-    st.stop()
-
 last_row = df.iloc[-1]
 current_price = last_row['close']
 vwap_price = last_row['vwap']
@@ -344,7 +325,6 @@ else:
     engine_badge = "Fractal Liquidity Engine"
     supply_box, demand_box, eq_level, bos_marks = None, None, None, []
 
-# Enforce Correct Risk/Reward Arithmetic
 s_risk = abs(short_entry - short_sl)
 s_rew = abs(short_entry - short_tp)
 s_rr = s_rew / (s_risk + 1e-9)
@@ -473,7 +453,7 @@ with col_side:
 
 st.markdown("---")
 
-# --- Comprehensive 5-Section Gemini Institutional Brief ---
+# --- Gemini Strategy Brief ---
 st.subheader(f"🤖 Gemini Institutional Strategy Brief ({'LuxAlgo SMC Benchmark' if is_smc else 'Tactical Fractal Matrix'})")
 
 prompt_ai = f"""
@@ -490,32 +470,10 @@ You are a senior hedge-fund derivatives execution trader evaluating {selected_sy
 Provide an institutional, actionable breakdown formatted EXACTLY into the following 5 numbered sections:
 
 ### 1. Market Structure & Key Levels
-(Analyze structural trend, price vs Session VWAP, oscillator state, and list exact Key Resistance and Support levels)
-
 ### 2. Liquidity & Structural Alignment
-(Synthesize where resting liquidity/FVGs sit vs major overhead/downside Order Block zones)
-
 ### 3. Long Setup (Bullish Impulse / Demand Absorption)
-- Thesis:
-- Execution Trigger: Limit entry at ${fmt(long_entry)}
-- Entry Range: ${fmt(long_entry)} - ${fmt(round(long_entry + (0.3 * atr_val), dec))}
-- Stop Loss: ${fmt(long_sl)} (Strict structure invalidation)
-- Take Profit 1: ${fmt(long_tp)}
-- Take Profit 2: ${fmt(fib_targets['1.000 (C=A)'])}
-- Risk/Reward Ratio: 1:{l_rr:.2f}
-
 ### 4. Short Setup (Bearish Mean Reversion / Sweep Absorption)
-- Thesis:
-- Execution Trigger: Limit entry or rejection at ${fmt(short_entry)}
-- Entry Range: ${fmt(short_entry)} - ${fmt(round(short_entry + (0.3 * atr_val), dec))}
-- Stop Loss: ${fmt(short_sl)}
-- Take Profit 1: ${fmt(short_tp)}
-- Take Profit 2: ${fmt(downside_liq[1])}
-- Risk/Reward Ratio: 1:{s_rr:.2f}
-
 ### 5. Execution Verdict & Primary Stance
-- Primary Stance: (Clearly declare "Favor Long" or "Favor Short")
-- Tactical Rationale: (Synthesize edge and path of least resistance on BTCC USDT perpetuals)
 """
 
 fallback_ai = f"""
@@ -553,7 +511,6 @@ st.markdown(brief_content)
 
 st.markdown("---")
 
-# --- Dual 1-Click BTCC Order Bridges Header with 2nd Refresh Button ---
 col_bridge_hdr, col_bridge_btn = st.columns([3, 1])
 
 with col_bridge_hdr:
