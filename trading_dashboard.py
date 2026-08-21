@@ -5,7 +5,6 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timezone
-import pytz
 import requests
 import json
 import os
@@ -261,13 +260,11 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
         prices = base + np.cumsum(np.random.normal(0, spread * 0.5, limit))
         df = pd.DataFrame({'timestamp': dates.astype(int) // 10**9, 'open': prices, 'high': prices + spread, 'low': prices - spread, 'close': prices, 'volume': np.random.uniform(500, 2000, limit)})
 
-    # Convert timestamp to US/Central time
-    df['datetime'] = pd.to_datetime(df['timestamp'], unit='s', utc=True)
-    df['datetime'] = df['datetime'].dt.tz_convert('US/Central')
+    # Robust offset conversion to Central Time (CDT UTC-5) without zoneinfo dependencies
+    df['datetime'] = pd.to_datetime(df['timestamp'], unit='s') - pd.Timedelta(hours=5)
 
     if live_price:
         df.iloc[-1, df.columns.get_loc('close')] = live_price
-        # Prevent massive blowout wicks by bounded max/min check
         df.iloc[-1, df.columns.get_loc('high')] = max(df.iloc[-1]['high'], live_price)
         df.iloc[-1, df.columns.get_loc('low')] = min(df.iloc[-1]['low'], live_price)
 
