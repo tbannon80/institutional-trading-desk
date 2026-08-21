@@ -218,7 +218,6 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     fsym = "BTC" if "BTC" in symbol else ("ETH" if "ETH" in symbol else ("SOL" if "SOL" in symbol else ("XRP" if "XRP" in symbol else "XAG")))
     
-    # 1. Real-Time WebSocket Ticker Proxy for Instant Zero-Lag Sync
     live_price = None
     if fsym == "XAG":
         try:
@@ -241,7 +240,6 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
         except Exception:
             pass
 
-    # 2. Build or Fetch Candle History
     df = None
     try:
         agg = 5 if tf == "5m" else (15 if tf == "15m" else 60)
@@ -265,7 +263,6 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
         prices = base + np.cumsum(np.random.normal(0, spread * 0.5, limit))
         df = pd.DataFrame({'datetime': dates, 'open': prices, 'high': prices + spread, 'low': prices - spread, 'close': prices, 'volume': np.random.uniform(500, 2000, limit)})
 
-    # Override the final candle close with the live tick to guarantee real-time matching
     if live_price:
         df.iloc[-1, df.columns.get_loc('close')] = live_price
         df.iloc[-1, df.columns.get_loc('high')] = max(df.iloc[-1]['high'], live_price)
@@ -279,8 +276,8 @@ st.title("⚡ Institutional Derivatives Execution Terminal")
 col_asset, col_engine, col_tf, col_act = st.columns([3, 3, 2, 1])
 
 assets = {
-    "🪙 Silver (SILVERUSDT)": "XAG/USDT",
     "₿ Bitcoin (BTCUSDT)": "BTC/USDT",
+    "🪙 Silver (SILVERUSDT)": "XAG/USDT",
     "Ξ Ethereum (ETHUSDT)": "ETH/USDT",
     "🟣 Solana (SOLUSDT)": "SOL/USDT",
     "✕ Ripple (XRPUSDT)": "XRP/USDT"
@@ -447,6 +444,86 @@ with col_side:
         <div class='data-row'><span>Wave B Floor</span><span class='data-row-bold'>${fmt(fib_targets['Wave B Floor'])}</span></div>
     </div>
     """, unsafe_allow_html=True)
+
+st.markdown("---")
+
+# --- Restored 5-Section Gemini Institutional Brief ---
+st.subheader(f"🤖 Gemini Institutional Strategy Brief ({'LuxAlgo SMC Benchmark' if is_smc else 'Tactical Fractal Matrix'})")
+
+prompt_ai = f"""
+You are a senior hedge-fund derivatives execution trader evaluating {selected_symbol} on {selected_tf.upper()} using {selected_engine}:
+- Spot Price: ${fmt(current_price)} USDT
+- Session VWAP: ${fmt(vwap_price)} USDT
+- ATR Buffer: ${fmt(atr_val)} USDT
+- RSI ({selected_tf}): {rsi:.1f} | Stoch RSI: {stoch_k:.1f}/{stoch_d:.1f}
+- Short Setup: Entry ${fmt(short_entry)} -> TP ${fmt(short_tp)} -> SL ${fmt(short_sl)} (R:R 1:{s_rr:.2f})
+- Long Setup: Entry ${fmt(long_entry)} -> TP ${fmt(long_tp)} -> SL ${fmt(long_sl)} (R:R 1:{l_rr:.2f})
+- Elliott Fibonacci Targets: {fib_targets}
+- Macro Context: DXY {dxy_synthetic}
+
+Provide an institutional, actionable breakdown formatted EXACTLY into the following 5 numbered sections:
+
+### 1. Market Structure & Key Levels
+(Analyze structural trend, price vs Session VWAP, oscillator state, and list exact Key Resistance and Support levels)
+
+### 2. Liquidity & Structural Alignment
+(Synthesize where resting liquidity/FVGs sit vs major overhead/downside Order Block zones)
+
+### 3. Long Setup (Bullish Impulse / Demand Absorption)
+- Thesis:
+- Execution Trigger: Limit entry at ${fmt(long_entry)}
+- Entry Range: ${fmt(long_entry)} - ${fmt(round(long_entry + (0.3 * atr_val), dec))}
+- Stop Loss: ${fmt(long_sl)} (Strict structure invalidation)
+- Take Profit 1: ${fmt(long_tp)}
+- Take Profit 2: ${fmt(fib_targets['1.000 (C=A)'])}
+- Risk/Reward Ratio: 1:{l_rr:.2f}
+
+### 4. Short Setup (Bearish Mean Reversion / Sweep Absorption)
+- Thesis:
+- Execution Trigger: Limit entry or rejection at ${fmt(short_entry)}
+- Entry Range: ${fmt(short_entry)} - ${fmt(round(short_entry + (0.3 * atr_val), dec))}
+- Stop Loss: ${fmt(short_sl)}
+- Take Profit 1: ${fmt(short_tp)}
+- Take Profit 2: ${fmt(downside_liq[1])}
+- Risk/Reward Ratio: 1:{s_rr:.2f}
+
+### 5. Execution Verdict & Primary Stance
+- Primary Stance: (Clearly declare "Favor Long" or "Favor Short")
+- Tactical Rationale: (Synthesize edge and path of least resistance on BTCC USDT perpetuals)
+"""
+
+fallback_ai = f"""
+### 1. Market Structure & Key Levels
+{selected_symbol} is trading at **${fmt(current_price)} USDT** under the {selected_engine} framework, relative to Session VWAP of **${fmt(vwap_price)} USDT**.
+* **Key Resistance Levels**: ${fmt(short_entry)}, ${fmt(overhead_liq[1])}, ${fmt(fib_targets['1.000 (C=A)'])}.
+* **Key Support Levels**: ${fmt(long_entry)}, ${fmt(vwap_price)}, ${fmt(downside_liq[2])}.
+
+### 2. Liquidity & Structural Alignment
+* Structural levels identify key institutional volume zones at **${fmt(short_entry)}** and **${fmt(long_entry)}**.
+
+### 3. Long Setup (Bullish Impulse / Demand Absorption)
+* **Execution Trigger**: Absorption at **${fmt(long_entry)}**.
+* **Entry Range**: ${fmt(long_entry)} - ${fmt(round(long_entry + (0.3 * atr_val), dec))}
+* **Stop Loss**: ${fmt(long_sl)}
+* **Take Profit 1**: ${fmt(long_tp)}
+* **Take Profit 2**: ${fmt(fib_targets['1.000 (C=A)'])}
+* **Risk/Reward Ratio**: 1:{l_rr:.2f}
+
+### 4. Short Setup (Bearish Mean Reversion / Sweep Absorption)
+* **Execution Trigger**: SFP or Order Block rejection at **${fmt(short_entry)}**.
+* **Entry Range**: ${fmt(short_entry)} - ${fmt(round(short_entry + (0.3 * atr_val), dec))}
+* **Stop Loss**: ${fmt(short_sl)}
+* **Take Profit 1**: ${fmt(short_tp)}
+* **Take Profit 2**: ${fmt(downside_liq[1])}
+* **Risk/Reward Ratio**: 1:{s_rr:.2f}
+
+### 5. Execution Verdict & Primary Stance
+* **Primary Stance**: **{"Favor Long" if rsi < 65 else "Favor Short"}**
+* **Tactical Rationale**: The setup offers favorable Risk/Reward by executing at structural boundaries.
+"""
+
+brief_content = generate_gemini_brief(prompt_ai, fallback_ai)
+st.markdown(brief_content)
 
 st.markdown("---")
 
