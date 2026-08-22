@@ -112,6 +112,24 @@ def generate_gemini_brief(prompt, fallback_text):
                 continue
     return fallback_text
 
+def fetch_live_spot_price(symbol="BTC/USDT"):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    fsym = "BTC" if "BTC" in symbol else ("ETH" if "ETH" in symbol else ("SOL" if "SOL" in symbol else ("XRP" if "XRP" in symbol else "XAG")))
+    if fsym == "XAG":
+        try:
+            r = requests.get("https://fapi.binance.com/fapi/v1/ticker/price?symbol=XAGUSDT", headers=headers, timeout=2).json()
+            if r.get('price'): return float(r['price'])
+        except Exception:
+            pass
+        return 69.34
+    else:
+        try:
+            r = requests.get(f"https://api.coinbase.com/v2/prices/{fsym}-USD/spot", headers=headers, timeout=2).json()
+            if r.get('data', {}).get('amount'): return float(r['data']['amount'])
+        except Exception:
+            pass
+        return 77644.0
+
 def calculate_indicators(df):
     delta = df['close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
@@ -213,9 +231,8 @@ def calculate_elliott_targets(df, symbol):
 
 @st.cache_data(ttl=3)
 def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    headers = {"User-Agent": "Mozilla/5.0"}
     fsym = "BTC" if "BTC" in symbol else ("ETH" if "ETH" in symbol else ("SOL" if "SOL" in symbol else ("XRP" if "XRP" in symbol else "XAG")))
-    
     df = None
     try:
         agg = 5 if tf == "5m" else (15 if tf == "15m" else 60)
@@ -238,9 +255,7 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
         prices = base + np.cumsum(np.random.normal(0, spread * 0.5, limit))
         df = pd.DataFrame({'timestamp': dates.astype(int) // 10**9, 'open': prices, 'high': prices + spread, 'low': prices - spread, 'close': prices, 'volume': np.random.uniform(500, 2000, limit)})
 
-    # Clean offset conversion to Central Time (CDT UTC-5)
     df['datetime'] = pd.to_datetime(df['timestamp'], unit='s') - pd.Timedelta(hours=5)
-
     return calculate_indicators(df)
 
 st.title("⚡ Institutional Derivatives Execution Terminal")
@@ -273,14 +288,15 @@ with col_act:
         st.cache_data.clear()
 
 df = fetch_cloud_klines(selected_symbol, tf=selected_tf)
-last_row = df.iloc[-1]
-current_price = last_row['close']
-vwap_price = last_row['vwap']
-stoch_k = last_row['stoch_k']
-stoch_d = last_row['stoch_d']
-rsi = last_row['rsi']
-atr_val = last_row['atr']
-sma_val = last_row['sma200']
+live_spot = fetch_live_spot_price(selected_symbol) # Dedicated live tick for header metrics
+current_price = live_spot
+
+vwap_price = df.iloc[-1]['vwap']
+stoch_k = df.iloc[-1]['stoch_k']
+stoch_d = df.iloc[-1]['stoch_d']
+rsi = df.iloc[-1]['rsi']
+atr_val = df.iloc[-1]['atr']
+sma_val = df.iloc[-1]['sma200']
 
 is_smc = "LuxAlgo" in selected_engine
 if is_smc:
