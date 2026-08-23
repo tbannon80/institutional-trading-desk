@@ -4,10 +4,9 @@ import numpy as np
 import requests
 import json
 import os
-import urllib.request
 from datetime import datetime, timezone
 
-# Import the sanitized math core
+# Import the sanitized math core and directional bias engine
 from smc_engine import calculate_clean_indicators, get_structural_levels
 
 st.set_page_config(
@@ -17,7 +16,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Custom High-Contrast Styling (Webull Dark Mode Inspired)
+# Custom High-Contrast Styling
 st.markdown("""
 <style>
 .metric-box {
@@ -51,7 +50,7 @@ st.markdown("""
     border: 1px solid #2a2e39;
     border-radius: 8px;
     padding: 16px;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
 }
 .bull-title {
     color: #089981;
@@ -84,16 +83,15 @@ st.markdown("""
     font-size: 0.85rem;
     color: #f0f3fa;
 }
+.bias-banner {
+    border-radius: 8px;
+    padding: 10px 16px;
+    margin-top: 6px;
+    margin-bottom: 8px;
+    border: 1px solid #2a2e39;
+}
 </style>
 """, unsafe_allow_html=True)
-
-def get_secret(key_name, default=""):
-    try:
-        return st.secrets[key_name]
-    except Exception:
-        return os.environ.get(key_name, default)
-
-GEMINI_API_KEY = get_secret("GEMINI_API_KEY", "")
 
 def fetch_live_spot_price(symbol="BTC/USDT"):
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -146,7 +144,7 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
     df['datetime'] = pd.to_datetime(df['timestamp'], unit='s') - pd.Timedelta(hours=5)
     return calculate_clean_indicators(df)
 
-# Header Asset Controls
+# Top Asset Bar
 col_asset, col_tf, col_act = st.columns([4, 2, 1])
 assets = {
     "₿ Bitcoin (BTCUSDT)": "BTC/USDT",
@@ -164,10 +162,10 @@ with col_tf:
     selected_tf = st.radio("Timeframe", ["5m", "15m", "1h", "4h"], index=0, horizontal=True, label_visibility="collapsed")
 
 with col_act:
-    if st.button("🔄 Refresh", use_container_width=True):
+    if st.button("🔄 Refresh", key="top_refresh_btn", use_container_width=True):
         st.cache_data.clear()
 
-# Compute Data & Levels via Sanitized smc_engine
+# Compute Data & Levels
 df = fetch_cloud_klines(selected_symbol, tf=selected_tf)
 live_spot = fetch_live_spot_price(selected_symbol)
 levels = get_structural_levels(df, selected_symbol, live_spot)
@@ -253,6 +251,27 @@ with col_bear:
     })
     st.table(bear_ladder_df)
     st.error(f"🚨 **Bearish Invalidation Line:** Clean close above **${fmt(s_plan['sl'])}** voids setup.")
+
+# Directional Bias Recommendation Bar & Lower Refresh Button
+bias = levels['bias']
+col_rec, col_rec_btn = st.columns([5, 1])
+
+with col_rec:
+    st.markdown(f"""
+    <div class='bias-banner' style='background: {bias['bg']}; border-left: 4px solid {bias['color']};'>
+        <span style='font-size: 0.95rem; font-weight: 800; color: {bias['color']}; letter-spacing: 0.04em;'>
+            RECOMMENDED STANCE: {bias['verdict']}
+        </span>
+        <div style='font-size: 0.82rem; color: #d1d4dc; margin-top: 3px;'>
+            {bias['reason']}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col_rec_btn:
+    st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
+    if st.button("🔄 Refresh Data", key="mid_refresh_btn", use_container_width=True):
+        st.cache_data.clear()
 
 # Fast BTCC Bridges
 st.divider()
