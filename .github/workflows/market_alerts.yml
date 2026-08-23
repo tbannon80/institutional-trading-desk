@@ -1,0 +1,30 @@
+name: Market Proximity Alert Watcher
+
+on:
+  schedule:
+    # Runs every 5 minutes (GitHub Actions maximum frequency)
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check-market:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          pip install pandas numpy requests
+
+      - name: Run Market Watcher
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python telegram_watcher.py
