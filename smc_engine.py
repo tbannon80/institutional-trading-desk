@@ -1,6 +1,5 @@
 """
-smc_engine.py - Smart Money Concepts & Liquidity Engine
-Sanitized calculation core with strict directional bounds, asset routing, and directional bias scoring.
+smc_engine.py - Institutional Smart Money Concepts & Execution Matrix Engine
 """
 import pandas as pd
 import numpy as np
@@ -27,83 +26,43 @@ def calculate_clean_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['atr'] = tr.rolling(14).mean().fillna(tr)
     return df
 
-def compute_directional_bias(df: pd.DataFrame, spot: float, vwap: float, rsi: float) -> dict:
-    """
-    Computes a quantitative weighted directional edge.
-    Pillars: VWAP Location (35%), CVD Slope (35%), RSI/Momentum Range (30%).
-    """
-    score = 0
-    
-    # 1. VWAP Location
-    if spot > vwap:
-        score += 1
-    elif spot < vwap:
-        score -= 1
-        
-    # 2. CVD Flow (last 4 candles)
-    if len(df) >= 5 and df['cvd'].iloc[-1] > df['cvd'].iloc[-4]:
-        score += 1
-    else:
-        score -= 1
-        
-    # 3. Momentum / Dealing Range Location
-    if rsi > 65:
-        score -= 1  # Overbought in premium -> favors mean reversion Short
-    elif rsi < 35:
-        score += 1  # Oversold in discount -> favors Long bounce
-        
-    if score >= 2:
-        return {
-            "verdict": "FAVOR LONG (BULLISH EDGE) 🟢",
-            "reason": "Price holding value with positive delta flow; higher probability of upward expansion.",
-            "color": "#089981",
-            "bg": "rgba(8, 153, 129, 0.15)"
-        }
-    elif score <= -2:
-        return {
-            "verdict": "FAVOR SHORT (BEARISH EDGE) 🔴",
-            "reason": "Price trading below equilibrium with net negative volume delta; favors mean reversion / lower rotation.",
-            "color": "#f23645",
-            "bg": "rgba(242, 54, 69, 0.15)"
-        }
-    else:
-        return {
-            "verdict": "NEUTRAL / RANGE ROTATION ⚖️",
-            "reason": "Price consolidating near equilibrium; wait for an outer boundary sweep before executing.",
-            "color": "#787b86",
-            "bg": "rgba(120, 123, 134, 0.15)"
-        }
-
 def get_structural_levels(df: pd.DataFrame, symbol: str, spot_price: float):
     """
-    Computes structural swing levels and execution plans.
+    Computes High-Conviction Supply/Demand boundaries and the 3-Tier Tactical Execution Matrix.
     Strictly asserts: Short SL > Short Entry >= Spot >= Long Entry > Long SL
     """
     is_silver = "XAG" in symbol or "SILVER" in symbol
     decimals = 3 if is_silver else (4 if "XRP" in symbol else (2 if "SOL" in symbol or "ETH" in symbol else 1))
     
     current = float(spot_price)
-    atr = max(float(df['atr'].iloc[-1]), current * 0.003)
+    
+    # Asset-specific ATR and spread floor
+    raw_atr = float(df['atr'].iloc[-1])
+    min_atr_floor = current * 0.0015 if is_silver else current * 0.0035
+    atr = max(raw_atr, min_atr_floor)
+    
     vwap = float(df['vwap'].iloc[-1])
     rsi_val = float(df['rsi'].iloc[-1])
     
-    # 1. Structural Pivots
-    recent_highs = df['high'].iloc[-30:]
-    recent_lows = df['low'].iloc[-30:]
+    # Structural Pivots
+    lookback = 35
+    recent_highs = df['high'].iloc[-lookback:]
+    recent_lows = df['low'].iloc[-lookback:]
     
-    swing_high = float(recent_highs[recent_highs > current].min()) if (recent_highs > current).any() else current + (1.2 * atr)
-    swing_low = float(recent_lows[recent_lows < current].max()) if (recent_lows < current).any() else current - (1.2 * atr)
+    # High Conviction Anchors (Premium Supply Ceiling / Discount Demand Floor)
+    swing_high = float(recent_highs[recent_highs > current].max()) if (recent_highs > current).any() else current + (1.8 * atr)
+    swing_low = float(recent_lows[recent_lows < current].min()) if (recent_lows < current).any() else current - (1.8 * atr)
     
-    # 2. Strict Directional Calculations
-    short_entry = round(max(swing_high, current + (0.4 * atr)), decimals)
+    # High-Conviction Core Plans
+    short_entry = round(max(swing_high, current + (0.5 * atr)), decimals)
     short_sl = round(short_entry + (1.2 * atr), decimals)
-    short_tp = round(min(vwap if vwap < current else swing_low, short_entry - (1.5 * atr)), decimals)
+    short_tp = round(min(vwap if vwap < current else swing_low, short_entry - (2.0 * atr)), decimals)
     
-    long_entry = round(min(swing_low, current - (0.4 * atr)), decimals)
+    long_entry = round(min(swing_low, current - (0.5 * atr)), decimals)
     long_sl = round(long_entry - (1.2 * atr), decimals)
-    long_tp = round(max(vwap if vwap > current else swing_high, long_entry + (1.5 * atr)), decimals)
+    long_tp = round(max(vwap if vwap > current else swing_high, long_entry + (2.0 * atr)), decimals)
 
-    # 3. Deterministic Inversion Guard
+    # Inversion Guard
     if not (short_sl > short_entry >= current >= long_entry > long_sl):
         short_entry = round(current + (1.0 * atr), decimals)
         short_sl = round(short_entry + (1.0 * atr), decimals)
@@ -112,10 +71,53 @@ def get_structural_levels(df: pd.DataFrame, symbol: str, spot_price: float):
         long_sl = round(long_entry - (1.0 * atr), decimals)
         long_tp = round(current, decimals)
 
-    overhead_liq = [short_entry, round(short_entry + (0.8 * atr), decimals), round(short_entry + (1.5 * atr), decimals)]
-    downside_liq = [long_entry, round(long_entry - (0.8 * atr), decimals), round(long_entry - (1.5 * atr), decimals)]
+    # 3-Tier Tactical Execution Matrix
+    # Setup 1: Primary Long (Discount Sweep)
+    l_trig_low = round(long_entry - (0.3 * atr), decimals)
+    l_trig_high = round(long_entry + (0.2 * atr), decimals)
+    l_sl = round(l_trig_low - (0.8 * atr), decimals)
+    l_tp1 = round(vwap if vwap > current else current + (0.5 * atr), decimals)
+    l_tp2 = short_entry
+    l_rr = round(abs(l_trig_high - l_tp2) / (abs(l_trig_high - l_sl) + 1e-9), 2)
     
-    bias_info = compute_directional_bias(df, current, vwap, rsi_val)
+    # Setup 2: Primary Short (Supply / Mitigation Fade)
+    s_trig_low = round(short_entry - (0.2 * atr), decimals)
+    s_trig_high = round(short_entry + (0.3 * atr), decimals)
+    s_sl = round(s_trig_high + (0.8 * atr), decimals)
+    s_tp1 = round(vwap if vwap < current else current - (0.5 * atr), decimals)
+    s_tp2 = long_entry
+    s_rr = round(abs(s_trig_low - s_tp2) / (abs(s_trig_low - s_sl) + 1e-9), 2)
+    
+    # Setup 3: Breakdown Short Continuation
+    bd_entry = round(current - (0.3 * atr), decimals)
+    bd_sl = round(current + (0.4 * atr), decimals)
+    bd_tp1 = long_entry
+    bd_tp2 = round(long_entry - (1.0 * atr), decimals)
+    bd_rr = round(abs(bd_entry - bd_tp1) / (abs(bd_entry - bd_sl) + 1e-9), 2)
+
+    tactical_matrix = [
+        {
+            "Setup": "🟢 Primary Long (Discount Floor Sweep)",
+            "Trigger / Entry": f"${l_trig_low:.{decimals}f} – ${l_trig_high:.{decimals}f}",
+            "Invalidation (SL)": f"${l_sl:.{decimals}f}",
+            "Targets (TP)": f"TP1: ${l_tp1:.{decimals}f} | TP2: ${l_tp2:.{decimals}f}",
+            "R:R & Rationale": f"1:{l_rr:.1f} R:R | Fading sell-side liquidity run into discount boundary; absorption expected."
+        },
+        {
+            "Setup": "🔴 Primary Short (Supply Retest / Fade)",
+            "Trigger / Entry": f"${s_trig_low:.{decimals}f} – ${s_trig_high:.{decimals}f}",
+            "Invalidation (SL)": f"${s_sl:.{decimals}f}",
+            "Targets (TP)": f"TP1: ${s_tp1:.{decimals}f} | TP2: ${s_tp2:.{decimals}f}",
+            "R:R & Rationale": f"1:{s_rr:.1f} R:R | Exhaustion wick into upper supply shelf under heavy Point of Control."
+        },
+        {
+            "Setup": "⚡ Aggressive Breakdown Short",
+            "Trigger / Entry": f"${bd_entry:.{decimals}f} (Confirmed close)",
+            "Invalidation (SL)": f"${bd_sl:.{decimals}f}",
+            "Targets (TP)": f"TP1: ${bd_tp1:.{decimals}f} | TP2: ${bd_tp2:.{decimals}f}",
+            "R:R & Rationale": f"1:{bd_rr:.1f} R:R | Momentum flush through thin intermediate volume air pocket."
+        }
+    ]
 
     return {
         "symbol": symbol,
@@ -124,10 +126,8 @@ def get_structural_levels(df: pd.DataFrame, symbol: str, spot_price: float):
         "vwap": round(vwap, decimals),
         "atr": round(atr, decimals),
         "rsi": round(rsi_val, 1),
-        "overhead": overhead_liq,
-        "downside": downside_liq,
         "short_plan": {"entry": short_entry, "sl": short_sl, "tp": short_tp},
         "long_plan": {"entry": long_entry, "sl": long_sl, "tp": long_tp},
-        "bias": bias_info,
+        "tactical_matrix": tactical_matrix,
         "is_silver": is_silver
     }
