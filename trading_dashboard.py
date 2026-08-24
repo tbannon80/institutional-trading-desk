@@ -6,7 +6,6 @@ import json
 import os
 from datetime import datetime, timezone
 
-# Import the sanitized math core and directional bias engine
 from smc_engine import calculate_clean_indicators, get_structural_levels
 
 st.set_page_config(
@@ -16,7 +15,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Custom High-Contrast Styling
 st.markdown("""
 <style>
 .metric-box {
@@ -112,7 +110,7 @@ def fetch_live_spot_price(symbol="BTC/USDT"):
         return 77246.0
 
 @st.cache_data(ttl=5)
-def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
+def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60, current_spot=77000.0):
     headers = {"User-Agent": "Mozilla/5.0"}
     fsym = "BTC" if "BTC" in symbol else ("ETH" if "ETH" in symbol else ("SOL" if "SOL" in symbol else ("XRP" if "XRP" in symbol else "XAG")))
     df = None
@@ -129,15 +127,18 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60):
             df.columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
     except Exception:
         pass
-    if df is None:
+        
+    # Scaled Fallback: Matches the actual active asset's spot price
+    if df is None or df['close'].iloc[-1] == 0:
         dates = pd.date_range(end=datetime.now(timezone.utc), periods=limit, freq='5min')
-        base = 77246.0
-        prices = base + np.cumsum(np.random.normal(0, 30.0, limit))
+        base = float(current_spot)
+        spread = base * 0.002
+        prices = base + np.cumsum(np.random.normal(0, spread * 0.4, limit))
         df = pd.DataFrame({
             'timestamp': dates.astype(int) // 10**9,
-            'open': prices - 10,
-            'high': prices + 25,
-            'low': prices - 25,
+            'open': prices - (spread * 0.1),
+            'high': prices + spread,
+            'low': prices - spread,
             'close': prices,
             'volume': np.random.uniform(500, 2000, limit)
         })
@@ -165,9 +166,8 @@ with col_act:
     if st.button("🔄 Refresh", key="top_refresh_btn", use_container_width=True):
         st.cache_data.clear()
 
-# Compute Data & Levels
-df = fetch_cloud_klines(selected_symbol, tf=selected_tf)
 live_spot = fetch_live_spot_price(selected_symbol)
+df = fetch_cloud_klines(selected_symbol, tf=selected_tf, current_spot=live_spot)
 levels = get_structural_levels(df, selected_symbol, live_spot)
 
 dec = levels['decimals']
@@ -177,7 +177,7 @@ def fmt(val):
     elif dec == 2: return f"{val:,.2f}"
     return f"{val:,.1f}"
 
-# Top Level Operational Matrix
+# Top Operational Matrix
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 m1.markdown(f"<div class='metric-box'><div class='metric-label'>Live Spot</div><div class='metric-val'>${fmt(levels['spot'])}</div><div class='metric-sub'>USDT Perpetual</div></div>", unsafe_allow_html=True)
 m2.markdown(f"<div class='metric-box'><div class='metric-label'>Session VWAP</div><div class='metric-val'>${fmt(levels['vwap'])}</div><div class='metric-sub'>Fair Value Pivot</div></div>", unsafe_allow_html=True)
@@ -188,9 +188,8 @@ m6.markdown(f"<div class='metric-box'><div class='metric-label'>Asset Type</div>
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# 1-Hour Tactical Execution Playbook (Webull Style)
+# 1-Hour Tactical Execution Playbook
 col_bull, col_bear = st.columns(2)
-
 s_plan = levels['short_plan']
 l_plan = levels['long_plan']
 
@@ -252,7 +251,7 @@ with col_bear:
     st.table(bear_ladder_df)
     st.error(f"🚨 **Bearish Invalidation Line:** Clean close above **${fmt(s_plan['sl'])}** voids setup.")
 
-# Directional Bias Recommendation Bar & Lower Refresh Button
+# Recommendation Bar & Refresh Button
 bias = levels['bias']
 col_rec, col_rec_btn = st.columns([5, 1])
 
