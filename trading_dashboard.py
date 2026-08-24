@@ -81,13 +81,6 @@ st.markdown("""
     font-size: 0.85rem;
     color: #f0f3fa;
 }
-.bias-banner {
-    border-radius: 8px;
-    padding: 10px 16px;
-    margin-top: 6px;
-    margin-bottom: 8px;
-    border: 1px solid #2a2e39;
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -100,17 +93,17 @@ def fetch_live_spot_price(symbol="BTC/USDT"):
             if r.get('price'): return float(r['price'])
         except Exception:
             pass
-        return 69.340
+        return 68.485
     else:
         try:
             r = requests.get(f"https://api.coinbase.com/v2/prices/{fsym}-USD/spot", headers=headers, timeout=3).json()
             if r.get('data', {}).get('amount'): return float(r['data']['amount'])
         except Exception:
             pass
-        return 77246.0
+        return 78900.0
 
 @st.cache_data(ttl=5)
-def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60, current_spot=77000.0):
+def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60, current_spot=78900.0):
     headers = {"User-Agent": "Mozilla/5.0"}
     fsym = "BTC" if "BTC" in symbol else ("ETH" if "ETH" in symbol else ("SOL" if "SOL" in symbol else ("XRP" if "XRP" in symbol else "XAG")))
     df = None
@@ -128,7 +121,6 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60, current_spot=77000.
     except Exception:
         pass
         
-    # Scaled Fallback: Matches the actual active asset's spot price
     if df is None or df['close'].iloc[-1] == 0:
         dates = pd.date_range(end=datetime.now(timezone.utc), periods=limit, freq='5min')
         base = float(current_spot)
@@ -145,7 +137,7 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60, current_spot=77000.
     df['datetime'] = pd.to_datetime(df['timestamp'], unit='s') - pd.Timedelta(hours=5)
     return calculate_clean_indicators(df)
 
-# Top Asset Bar
+# Asset Bar
 col_asset, col_tf, col_act = st.columns([4, 2, 1])
 assets = {
     "₿ Bitcoin (BTCUSDT)": "BTC/USDT",
@@ -177,18 +169,18 @@ def fmt(val):
     elif dec == 2: return f"{val:,.2f}"
     return f"{val:,.1f}"
 
-# Top Operational Matrix
+# Operational Header Metrics
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 m1.markdown(f"<div class='metric-box'><div class='metric-label'>Live Spot</div><div class='metric-val'>${fmt(levels['spot'])}</div><div class='metric-sub'>USDT Perpetual</div></div>", unsafe_allow_html=True)
 m2.markdown(f"<div class='metric-box'><div class='metric-label'>Session VWAP</div><div class='metric-val'>${fmt(levels['vwap'])}</div><div class='metric-sub'>Fair Value Pivot</div></div>", unsafe_allow_html=True)
-m3.markdown(f"<div class='metric-box'><div class='metric-label'>Decision Range</div><div class='metric-val'>${fmt(levels['long_plan']['entry'])} - ${fmt(levels['short_plan']['entry'])}</div><div class='metric-sub'>Execution Bounds</div></div>", unsafe_allow_html=True)
+m3.markdown(f"<div class='metric-box'><div class='metric-label'>Dealing Range</div><div class='metric-val'>${fmt(levels['long_plan']['entry'])} - ${fmt(levels['short_plan']['entry'])}</div><div class='metric-sub'>Discount / Premium</div></div>", unsafe_allow_html=True)
 m4.markdown(f"<div class='metric-box'><div class='metric-label'>ATR Buffer</div><div class='metric-val'>${fmt(levels['atr'])}</div><div class='metric-sub'>14-Period Volatility</div></div>", unsafe_allow_html=True)
 m5.markdown(f"<div class='metric-box'><div class='metric-label'>RSI ({selected_tf})</div><div class='metric-val'>{levels['rsi']}</div><div class='metric-sub'>{'Overbought' if levels['rsi'] > 70 else ('Oversold' if levels['rsi'] < 30 else 'Neutral Flow')}</div></div>", unsafe_allow_html=True)
-m6.markdown(f"<div class='metric-box'><div class='metric-label'>Asset Type</div><div class='metric-val'>{'COMEX / SMT' if levels['is_silver'] else 'Crypto L2'}</div><div class='metric-sub'>{'Session Levels' if levels['is_silver'] else 'OrderBook Depth'}</div></div>", unsafe_allow_html=True)
+m6.markdown(f"<div class='metric-box'><div class='metric-label'>Macro Context</div><div class='metric-val'>{'DXY 98.97' if levels['is_silver'] else 'L2 Delta Flow'}</div><div class='metric-sub'>{'COMEX Sessions' if levels['is_silver'] else 'Crypto Derivatives'}</div></div>", unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# 1-Hour Tactical Execution Playbook
+# High-Conviction Bullish and Bearish Plans (The Big Anchors)
 col_bull, col_bear = st.columns(2)
 s_plan = levels['short_plan']
 l_plan = levels['long_plan']
@@ -196,81 +188,53 @@ l_plan = levels['long_plan']
 with col_bull:
     st.markdown(f"""
     <div class='playbook-card' style='border-top: 3px solid #089981;'>
-        <div class='bull-title'>🟢 Bullish Execution Plan</div>
-        <div class='section-title'>Thesis</div>
-        <p style='font-size: 0.88rem; margin-bottom: 8px;'>Defense of the demand boundary at <b>${fmt(l_plan['entry'])}</b> and holding above VWAP (<b>${fmt(levels['vwap'])}</b>) opens the path toward upper supply rotation.</p>
-        <div class='section-title'>Trigger Setup</div>
+        <div class='bull-title'>🟢 Bullish High-Conviction Anchor</div>
+        <div class='section-title'>Macro Thesis</div>
+        <p style='font-size: 0.88rem; margin-bottom: 8px;'>Institutional accumulation in deep Discount demand at <b>${fmt(l_plan['entry'])}</b> with absorption of sell-side liquidity opens rotation back to Equilibrium and Premium supply.</p>
+        <div class='section-title'>Execution Rules</div>
         <ul style='font-size: 0.85rem; padding-left: 20px; margin-bottom: 8px;'>
-            <li>Hold above structural support floor at <b>${fmt(l_plan['entry'])}</b>.</li>
-            <li>Reclaim Session VWAP at <b>${fmt(levels['vwap'])}</b> on positive delta.</li>
-            <li>Confirmation close above immediate reaction wick.</li>
+            <li>Sweep of sell-side liquidity into the Discount Floor at <b>${fmt(l_plan['entry'])}</b>.</li>
+            <li>5m absorption wicks with positive CVD delta shift.</li>
+            <li>Targeting mean-reversion rotation toward Session VWAP.</li>
         </ul>
         <div class='section-title'>Upside Roadmap</div>
         <div style='margin-bottom: 12px;'>
-            <span class='roadmap-tag'>Entry: ${fmt(l_plan['entry'])}</span> ➔ 
-            <span class='roadmap-tag'>TP1: ${fmt(levels['vwap'])}</span> ➔ 
-            <span class='roadmap-tag'>TP2: ${fmt(l_plan['tp'])}</span>
+            <span class='roadmap-tag'>Demand Floor: ${fmt(l_plan['entry'])}</span> ➔ 
+            <span class='roadmap-tag'>VWAP / EQ: ${fmt(levels['vwap'])}</span> ➔ 
+            <span class='roadmap-tag'>Supply Target: ${fmt(l_plan['tp'])}</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
-    
-    bull_ladder_df = pd.DataFrame({
-        "Level": [f"TP1 (VWAP): ${fmt(levels['vwap'])}", f"TP2 (Supply): ${fmt(l_plan['tp'])}", f"TP3 (Expansion): ${fmt(levels['overhead'][2])}"],
-        "Action": ["Take 40% Off", "Take 40% Off", "Runner Target"],
-        "Execution": ["Move SL to Breakeven", "Lock Guaranteed Profit", "Trailing Pivot Stop"]
-    })
-    st.table(bull_ladder_df)
-    st.error(f"🚨 **Bullish Invalidation Line:** Loss of **${fmt(l_plan['sl'])}** voids setup.")
+    st.error(f"🚨 **Bullish Invalidation:** Clean 5m close below **${fmt(l_plan['sl'])}** voids thesis.")
 
 with col_bear:
     st.markdown(f"""
     <div class='playbook-card' style='border-top: 3px solid #f23645;'>
-        <div class='bear-title'>🔴 Bearish Execution Plan</div>
-        <div class='section-title'>Thesis</div>
-        <p style='font-size: 0.88rem; margin-bottom: 8px;'>Exhaustion wick into the overhead supply zone at <b>${fmt(s_plan['entry'])}</b> with failure to reclaim VWAP indicates a liquidity sweep ready to rotate down.</p>
-        <div class='section-title'>Trigger Setup</div>
+        <div class='bear-title'>🔴 Bearish High-Conviction Anchor</div>
+        <div class='section-title'>Macro Thesis</div>
+        <p style='font-size: 0.88rem; margin-bottom: 8px;'>Exhaustion wick into the overhead Premium Supply block at <b>${fmt(s_plan['entry'])}</b> with failure to accept above POC confirms distribution ready to rotate lower.</p>
+        <div class='section-title'>Execution Rules</div>
         <ul style='font-size: 0.85rem; padding-left: 20px; margin-bottom: 8px;'>
-            <li>Rejection wick or SFP printed at <b>${fmt(s_plan['entry'])}</b>.</li>
-            <li>Break below Session VWAP at <b>${fmt(levels['vwap'])}</b>.</li>
-            <li>CVD delta rolling over on the 5-minute candle.</li>
+            <li>Sweep of buy-side liquidity into Premium Supply at <b>${fmt(s_plan['entry'])}</b>.</li>
+            <li>5m rejection candle / CHoCH breakdown beneath local shelf.</li>
+            <li>Failure to hold structural Equilibrium.</li>
         </ul>
         <div class='section-title'>Downside Roadmap</div>
         <div style='margin-bottom: 12px;'>
-            <span class='roadmap-tag'>Entry: ${fmt(s_plan['entry'])}</span> ➔ 
-            <span class='roadmap-tag'>TP1: ${fmt(levels['vwap'])}</span> ➔ 
-            <span class='roadmap-tag'>TP2: ${fmt(s_plan['tp'])}</span>
+            <span class='roadmap-tag'>Supply Ceiling: ${fmt(s_plan['entry'])}</span> ➔ 
+            <span class='roadmap-tag'>VWAP / EQ: ${fmt(levels['vwap'])}</span> ➔ 
+            <span class='roadmap-tag'>Discount Floor: ${fmt(s_plan['tp'])}</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
-    
-    bear_ladder_df = pd.DataFrame({
-        "Level": [f"TP1 (VWAP): ${fmt(levels['vwap'])}", f"TP2 (Demand): ${fmt(s_plan['tp'])}", f"TP3 (Expansion): ${fmt(levels['downside'][2])}"],
-        "Action": ["Take 40% Off", "Take 40% Off", "Runner Target"],
-        "Execution": ["Move SL to Breakeven", "Lock Guaranteed Profit", "Trailing Pivot Stop"]
-    })
-    st.table(bear_ladder_df)
-    st.error(f"🚨 **Bearish Invalidation Line:** Clean close above **${fmt(s_plan['sl'])}** voids setup.")
+    st.error(f"🚨 **Bearish Invalidation:** Clean 5m close above **${fmt(s_plan['sl'])}** voids thesis.")
 
-# Recommendation Bar & Refresh Button
-bias = levels['bias']
-col_rec, col_rec_btn = st.columns([5, 1])
+# Tactical Execution Matrix (Replacing the unstable recommendation banner)
+st.divider()
+st.subheader(f"📊 Tactical Execution Matrix ({selected_symbol})")
 
-with col_rec:
-    st.markdown(f"""
-    <div class='bias-banner' style='background: {bias['bg']}; border-left: 4px solid {bias['color']};'>
-        <span style='font-size: 0.95rem; font-weight: 800; color: {bias['color']}; letter-spacing: 0.04em;'>
-            RECOMMENDED STANCE: {bias['verdict']}
-        </span>
-        <div style='font-size: 0.82rem; color: #d1d4dc; margin-top: 3px;'>
-            {bias['reason']}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col_rec_btn:
-    st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
-    if st.button("🔄 Refresh Data", key="mid_refresh_btn", use_container_width=True):
-        st.cache_data.clear()
+matrix_df = pd.DataFrame(levels['tactical_matrix'])
+st.table(matrix_df)
 
 # Fast BTCC Bridges
 st.divider()
