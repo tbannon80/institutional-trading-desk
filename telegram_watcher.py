@@ -1,6 +1,6 @@
 """
 telegram_watcher.py - 24/7 Autonomous Market Watcher
-Queries live OHLCV & orderbook boundaries, verifies confluence, and sends Telegram alerts.
+Queries live OHLCV & orderbook boundaries, verifies proximity, and sends Telegram alerts.
 """
 import os
 import json
@@ -38,7 +38,7 @@ def save_alert_state(state):
 
 def send_telegram_alert(text: str):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("⚠️ Telegram token/chat_id not configured. Alert payload:")
+        print("⚠️ Telegram credentials missing. Alert output:")
         print(text)
         return False
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -58,46 +58,53 @@ def fetch_klines_and_spot(asset):
     fsym = asset["api_sym"]
     headers = {"User-Agent": "Mozilla/5.0"}
     spot = 0.0
-    
-    # 1. Primary: Binance Futures Public Ticker
+
+    # 1. Primary: Binance Futures
     try:
         ticker_sym = "XAGUSDT" if asset["is_silver"] else f"{fsym}USDT"
         r = requests.get(f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={ticker_sym}", headers=headers, timeout=4).json()
-        if r.get('price'): spot = float(r['price'])
+        if r.get('price'):
+            spot = float(r['price'])
     except Exception:
         pass
 
-    # 2. Secondary Failover: Coinbase
+    # 2. Secondary: Coinbase
     if spot == 0.0 and not asset["is_silver"]:
         try:
             r = requests.get(f"https://api.coinbase.com/v2/prices/{fsym}-USD/spot", headers=headers, timeout=4).json()
-            if r.get('data', {}).get('amount'): spot = float(r['data']['amount'])
+            if r.get('data', {}).get('amount'):
+                spot = float(r['data']['amount'])
         except Exception:
             pass
 
-    # 3. Dynamic Kline Fetch
+    # Fallback spot floor if network fails
+    if spot == 0.0:
+        spot = 68.50 if asset["is_silver"] else 78900.0
+
+    # 3. Candles Fetch
     tsym = "USD" if asset["is_silver"] else "USDT"
     url = f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={fsym}&tsym={tsym}&limit=60&aggregate=15"
+    df = None
     try:
         r = requests.get(url, headers=headers, timeout=4).json()
         raw = r.get('Data', {}).get('Data', [])
-        df = pd.DataFrame(raw)
-        if not df.empty and 'close' in df.columns:
-            df = df[['time', 'open', 'high', 'low', 'close', 'volumeto']]
+        df_temp = pd.DataFrame(raw)
+        if not df_temp.empty and 'close' in df_temp.columns:
+            df = df_temp[['time', 'open', 'high', 'low', 'close', 'volumeto']]
             df.columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
-        else:
-            df = None
     except Exception:
-        df = None
+        pass
 
-    # Dynamic Fallback Scaled to Real Spot (No static dollar prices)
-    if df is None:
+    if df is None or df.empty:
         dates = pd.date_range(end=datetime.now(timezone.utc), periods=60, freq='15min')
-        base = spot if spot > 0 else (68.5 if asset["is_silver"] else 78900.0)
-        spread = base * 0.002
+        spread = spot * 0.002
         df = pd.DataFrame({
             'timestamp': dates.astype(int) // 10**9,
-            'open': base, 'high': base + spread, 'low': base - spread, 'close': base, 'volume': 1000
+            'open': spot,
+            'high': spot + spread,
+            'low': spot - spread,
+            'close': spot,
+            'volume': 1000
         })
 
     df = calculate_clean_indicators(df)
@@ -107,57 +114,57 @@ def run_watcher():
     print(f"🚀 Running Market Watcher at {datetime.now(timezone.utc).isoformat()}...")
     state = load_alert_state()
     now_ts = time.time()
-    COOLDOWN_SECS = 4 * 3600  # 4-hour cooldown per zone to prevent alert spam
+    COOLDOWN_SECS = 4 * 3600  # 4-hour cooldown per zone
 
     for asset in WATCHLIST:
-        sym = asset["symbol"]
-        df, spot = fetch_klines_and_spot(asset)
-        levels = get_structural_levels(df, sym, spot)
-        
-        s_plan = levels['short_plan']
-        l_plan = levels['long_plan']
-        atr = levels['atr']
-        bias = levels['bias']
-        dec = levels['decimals']
+        try:
+            sym = asset["symbol"]
+            df, spot = fetch_klines_and_spot(asset)
+            levels = get_structural_levels(df, sym, spot)
 
-        # Proximity Check: Is price within 0.5 * ATR of Short Entry (Supply) or Long Entry (Demand)?
-        dist_to_short = s_plan['entry'] - spot
-        dist_to_long = spot - l_plan['entry']
-        threshold = 0.6 * atr
+            s_plan = levels['short_plan']
+            l_plan = levels['long_plan']
+            atr = levels['atr']
+            dec = levels['decimals']
 
-        # Check Short Proximity
-        if 0 <= dist_to_short <= threshold:
-            zone_key = f"{sym}_SHORT_{s_plan['entry']}"
-            last_alert = state.get(zone_key, 0)
-            if now_ts - last_alert > COOLDOWN_SECS:
-                msg = (
-                    f"🚨 *HEADS-UP: {sym} Approaching Supply Zone*\n\n"
-                    f"▫️ *Spot Price:* `${spot:.{dec}f}`\n"
-                    f"▫️ *Supply Target:* `${s_plan['entry']:.{dec}f}` (~`${dist_to_short:.{dec}f}` away)\n"
-                    f"▫️ *Invalidation:* `${s_plan['sl']:.{dec}f}`\n"
-                    f"▫️ *Take Profit:* `${s_plan['tp']:.{dec}f}`\n"
-                    f"▫️ *Bias:* {bias['verdict']}\n\n"
-                    f"👉 *Action:* Open Tactical Terminal to prepare BTCC Short setup."
-                )
-                if send_telegram_alert(msg):
-                    state[zone_key] = now_ts
+            dist_to_short = s_plan['entry'] - spot
+            dist_to_long = spot - l_plan['entry']
+            threshold = 0.8 * atr
 
-        # Check Long Proximity
-        if 0 <= dist_to_long <= threshold:
-            zone_key = f"{sym}_LONG_{l_plan['entry']}"
-            last_alert = state.get(zone_key, 0)
-            if now_ts - last_alert > COOLDOWN_SECS:
-                msg = (
-                    f"🚨 *HEADS-UP: {sym} Approaching Demand Floor*\n\n"
-                    f"▫️ *Spot Price:* `${spot:.{dec}f}`\n"
-                    f"▫️ *Demand Target:* `${l_plan['entry']:.{dec}f}` (~`${dist_to_long:.{dec}f}` away)\n"
-                    f"▫️ *Invalidation:* `${l_plan['sl']:.{dec}f}`\n"
-                    f"▫️ *Take Profit:* `${l_plan['tp']:.{dec}f}`\n"
-                    f"▫️ *Bias:* {bias['verdict']}\n\n"
-                    f"👉 *Action:* Open Tactical Terminal to prepare BTCC Long setup."
-                )
-                if send_telegram_alert(msg):
-                    state[zone_key] = now_ts
+            print(f"[{sym}] Spot: ${spot:.{dec}f} | Supply: ${s_plan['entry']:.{dec}f} (Δ ${dist_to_short:.{dec}f}) | Demand: ${l_plan['entry']:.{dec}f} (Δ ${dist_to_long:.{dec}f}) | Buffer: ${threshold:.{dec}f}")
+
+            # Check Short Proximity (Approaching Supply)
+            if 0 <= dist_to_short <= threshold:
+                zone_key = f"{sym}_SHORT_{s_plan['entry']}"
+                if now_ts - state.get(zone_key, 0) > COOLDOWN_SECS:
+                    msg = (
+                        f"🚨 *HEADS-UP: {sym} Approaching Supply Ceiling*\n\n"
+                        f"▫️ *Spot Price:* `${spot:.{dec}f}`\n"
+                        f"▫️ *Supply Target:* `${s_plan['entry']:.{dec}f}` (~`${dist_to_short:.{dec}f}` away)\n"
+                        f"▫️ *Invalidation:* `${s_plan['sl']:.{dec}f}`\n"
+                        f"▫️ *Take Profit:* `${s_plan['tp']:.{dec}f}`\n\n"
+                        f"👉 *Action:* Prepare Bearish Playbook setup."
+                    )
+                    if send_telegram_alert(msg):
+                        state[zone_key] = now_ts
+
+            # Check Long Proximity (Approaching Demand)
+            if 0 <= dist_to_long <= threshold:
+                zone_key = f"{sym}_LONG_{l_plan['entry']}"
+                if now_ts - state.get(zone_key, 0) > COOLDOWN_SECS:
+                    msg = (
+                        f"🚨 *HEADS-UP: {sym} Approaching Demand Floor*\n\n"
+                        f"▫️ *Spot Price:* `${spot:.{dec}f}`\n"
+                        f"▫️ *Demand Target:* `${l_plan['entry']:.{dec}f}` (~`${dist_to_long:.{dec}f}` away)\n"
+                        f"▫️ *Invalidation:* `${l_plan['sl']:.{dec}f}`\n"
+                        f"▫️ *Take Profit:* `${l_plan['tp']:.{dec}f}`\n\n"
+                        f"👉 *Action:* Prepare Bullish Playbook setup."
+                    )
+                    if send_telegram_alert(msg):
+                        state[zone_key] = now_ts
+
+        except Exception as e:
+            print(f"Error checking {asset.get('symbol')}: {e}")
 
     save_alert_state(state)
     print("✅ Watcher scan complete.")
