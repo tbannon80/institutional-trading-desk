@@ -68,20 +68,21 @@ def fetch_klines_and_spot(asset):
     except Exception:
         pass
 
-    # 2. Secondary: Coinbase
-    if spot == 0.0 and not asset["is_silver"]:
+    # 2. Secondary: CryptoCompare / Coinbase
+    if spot == 0.0:
         try:
-            r = requests.get(f"https://api.coinbase.com/v2/prices/{fsym}-USD/spot", headers=headers, timeout=4).json()
-            if r.get('data', {}).get('amount'):
-                spot = float(r['data']['amount'])
+            if asset["is_silver"]:
+                r = requests.get("https://min-api.cryptocompare.com/data/price?fsym=XAG&tsyms=USD", headers=headers, timeout=4).json()
+                if r.get('USD'):
+                    spot = float(r['USD'])
+            else:
+                r = requests.get(f"https://api.coinbase.com/v2/prices/{fsym}-USD/spot", headers=headers, timeout=4).json()
+                if r.get('data', {}).get('amount'):
+                    spot = float(r['data']['amount'])
         except Exception:
             pass
 
-    # Fallback spot floor if network fails
-    if spot == 0.0:
-        spot = 68.50 if asset["is_silver"] else 78900.0
-
-    # 3. Candles Fetch
+    # 3. Dynamic Kline Fetch
     tsym = "USD" if asset["is_silver"] else "USDT"
     url = f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={fsym}&tsym={tsym}&limit=60&aggregate=15"
     df = None
@@ -97,14 +98,11 @@ def fetch_klines_and_spot(asset):
 
     if df is None or df.empty:
         dates = pd.date_range(end=datetime.now(timezone.utc), periods=60, freq='15min')
-        spread = spot * 0.002
+        base = spot if spot > 0 else (70.40 if asset["is_silver"] else 78900.0)
+        spread = base * 0.002
         df = pd.DataFrame({
             'timestamp': dates.astype(int) // 10**9,
-            'open': spot,
-            'high': spot + spread,
-            'low': spot - spread,
-            'close': spot,
-            'volume': 1000
+            'open': base, 'high': base + spread, 'low': base - spread, 'close': base, 'volume': 1000
         })
 
     df = calculate_clean_indicators(df)
