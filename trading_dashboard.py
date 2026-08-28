@@ -87,17 +87,28 @@ st.markdown("""
 def fetch_live_spot_price(symbol="BTC/USDT"):
     headers = {"User-Agent": "Mozilla/5.0"}
     fsym = "BTC" if "BTC" in symbol else ("ETH" if "ETH" in symbol else ("SOL" if "SOL" in symbol else ("XRP" if "XRP" in symbol else "XAG")))
+    
     if fsym == "XAG":
+        # 1. Primary: Binance Futures
         try:
             r = requests.get("https://fapi.binance.com/fapi/v1/ticker/price?symbol=XAGUSDT", headers=headers, timeout=3).json()
-            if r.get('price'): return float(r['price'])
+            if r.get('price'): 
+                return float(r['price'])
         except Exception:
             pass
-        return 68.485
+        # 2. Backup: CryptoCompare Spot
+        try:
+            r = requests.get("https://min-api.cryptocompare.com/data/price?fsym=XAG&tsyms=USD", headers=headers, timeout=3).json()
+            if r.get('USD'): 
+                return float(r['USD'])
+        except Exception:
+            pass
+        return 70.400  # Updated baseline fallback
     else:
         try:
             r = requests.get(f"https://api.coinbase.com/v2/prices/{fsym}-USD/spot", headers=headers, timeout=3).json()
-            if r.get('data', {}).get('amount'): return float(r['data']['amount'])
+            if r.get('data', {}).get('amount'): 
+                return float(r['data']['amount'])
         except Exception:
             pass
         return 78900.0
