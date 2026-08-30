@@ -10,7 +10,7 @@ import pandas as pd
 from datetime import datetime, timezone
 from smc_engine import calculate_clean_indicators, get_structural_levels
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8759950123:AAFCdt-lGTi6f2pD5jMpw7Ia04XgfiuwfD8")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "8989112896")
 STATE_FILE = os.path.join(os.path.dirname(__file__), "alert_state.json")
 
