@@ -89,50 +89,84 @@ def fetch_live_spot_price(symbol="BTC/USDT"):
     fsym = "BTC" if "BTC" in symbol else ("ETH" if "ETH" in symbol else ("SOL" if "SOL" in symbol else ("XRP" if "XRP" in symbol else "XAG")))
     
     if fsym == "XAG":
-        # 1. Primary: Binance Futures
         try:
-            r = requests.get("https://fapi.binance.com/fapi/v1/ticker/price?symbol=XAGUSDT", headers=headers, timeout=3).json()
-            if r.get('price'): 
+            url = "https://query1.finance.yahoo.com/v8/finance/chart/SI=F?interval=1m&range=1d"
+            r = requests.get(url, headers=headers, timeout=3).json()
+            price = r['chart']['result'][0]['meta']['regularMarketPrice']
+            if price:
+                return float(price)
+        except Exception:
+            pass
+        return 28.50  # Updated current spot silver fallback
+    else:
+        try:
+            mexc_symbol = f"{fsym}USDT"
+            url = f"https://api.mexc.com/api/v3/ticker/price?symbol={mexc_symbol}"
+            r = requests.get(url, headers=headers, timeout=3).json()
+            if r.get('price'):
                 return float(r['price'])
         except Exception:
             pass
-        # 2. Backup: CryptoCompare Spot
-        try:
-            r = requests.get("https://min-api.cryptocompare.com/data/price?fsym=XAG&tsyms=USD", headers=headers, timeout=3).json()
-            if r.get('USD'): 
-                return float(r['USD'])
-        except Exception:
-            pass
-        return 70.400  # Updated baseline fallback
-    else:
-        try:
-            r = requests.get(f"https://api.coinbase.com/v2/prices/{fsym}-USD/spot", headers=headers, timeout=3).json()
-            if r.get('data', {}).get('amount'): 
-                return float(r['data']['amount'])
-        except Exception:
-            pass
-        return 78900.0
+        return 96500.0 if fsym == "BTC" else (2600.0 if fsym == "ETH" else (140.0 if fsym == "SOL" else 1.35))
 
 @st.cache_data(ttl=5)
 def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60, current_spot=78900.0):
     headers = {"User-Agent": "Mozilla/5.0"}
     fsym = "BTC" if "BTC" in symbol else ("ETH" if "ETH" in symbol else ("SOL" if "SOL" in symbol else ("XRP" if "XRP" in symbol else "XAG")))
     df = None
-    try:
-        agg = 5 if tf == "5m" else (15 if tf == "15m" else 60)
-        endpoint = "histominute" if "m" in tf else ("histohour" if "h" in tf else "histoday")
-        tsym = "USD" if fsym == "XAG" else "USDT"
-        url = f"https://min-api.cryptocompare.com/data/v2/{endpoint}?fsym={fsym}&tsym={tsym}&limit={limit}&aggregate={agg}"
-        r = requests.get(url, headers=headers, timeout=4).json()
-        if r.get('Response') == 'Success' and r.get('Data', {}).get('Data'):
-            raw = r['Data']['Data']
-            df = pd.DataFrame(raw)
-            df = df[['time', 'open', 'high', 'low', 'close', 'volumeto']]
-            df.columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
-    except Exception:
-        pass
-        
-    if df is None or df['close'].iloc[-1] == 0:
+    
+    if fsym == "XAG":
+        # Fetch from Yahoo Finance
+        try:
+            interval = tf # "5m", "15m", "1h", "4h"
+            if tf == "5m": range_val = "2d"
+            elif tf == "15m": range_val = "5d"
+            elif tf == "1h": range_val = "15d"
+            else: range_val = "60d" # 4h
+            
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/SI=F?interval={interval}&range={range_val}"
+            r = requests.get(url, headers=headers, timeout=5).json()
+            res = r['chart']['result'][0]
+            timestamps = res['timestamp']
+            quote = res['indicators']['quote'][0]
+            
+            df_temp = pd.DataFrame({
+                'timestamp': timestamps,
+                'open': quote['open'],
+                'high': quote['high'],
+                'low': quote['low'],
+                'close': quote['close'],
+                'volume': quote['volume']
+            })
+            df = df_temp.dropna().reset_index(drop=True).tail(limit)
+        except Exception as e:
+            print(f"Error fetching XAG from Yahoo Finance: {e}")
+            pass
+    else:
+        # Fetch from MEXC API
+        try:
+            mexc_symbol = f"{fsym}USDT"
+            mexc_interval = "5m" if tf == "5m" else ("15m" if tf == "15m" else ("60m" if tf == "1h" else "4h"))
+            url = f"https://api.mexc.com/api/v3/klines?symbol={mexc_symbol}&interval={mexc_interval}&limit={limit}"
+            r = requests.get(url, headers=headers, timeout=5).json()
+            if isinstance(r, list) and len(r) > 0:
+                rows = []
+                for row in r:
+                    rows.append({
+                        'timestamp': int(row[0]) // 1000,
+                        'open': float(row[1]),
+                        'high': float(row[2]),
+                        'low': float(row[3]),
+                        'close': float(row[4]),
+                        'volume': float(row[5])
+                    })
+                df = pd.DataFrame(rows)
+        except Exception as e:
+            print(f"Error fetching {fsym} from MEXC: {e}")
+            pass
+            
+    # Fallback to random data if fetching failed
+    if df is None or df.empty or df['close'].iloc[-1] == 0:
         dates = pd.date_range(end=datetime.now(timezone.utc), periods=limit, freq='5min')
         base = float(current_spot)
         spread = base * 0.002
@@ -145,6 +179,7 @@ def fetch_cloud_klines(symbol="BTC/USDT", tf="5m", limit=60, current_spot=78900.
             'close': prices,
             'volume': np.random.uniform(500, 2000, limit)
         })
+        
     df['datetime'] = pd.to_datetime(df['timestamp'], unit='s') - pd.Timedelta(hours=5)
     return calculate_clean_indicators(df)
 
@@ -180,6 +215,49 @@ def fmt(val):
     elif dec == 2: return f"{val:,.2f}"
     return f"{val:,.1f}"
 
+# Fetch Brain Conviction Scores and Sentiment
+try:
+    from brain_db import get_setting
+    from brain_metrics import fetch_binance_funding_and_oi, fetch_fred_dxy
+    from brain_scorer import calculate_conviction_score
+    
+    fred_key = get_setting("fred_api_key")
+    fred_data = fetch_fred_dxy(fred_key) if fred_key else {"dxy_value": 100.0, "dxy_trend": "FLAT", "dxy_sma_5d": 100.0}
+    btc_metrics = fetch_binance_funding_and_oi("BTCUSDT")
+    
+    bullish_fvg_present = any(df['bullish_fvg'].iloc[-5:]) if 'bullish_fvg' in df.columns else False
+    bearish_fvg_present = any(df['bearish_fvg'].iloc[-5:]) if 'bearish_fvg' in df.columns else False
+    
+    # Calculate Bullish (LONG) conviction
+    f_rate = btc_metrics["funding_rate"] if "BTC" in selected_symbol.upper() else None
+    oi_t = btc_metrics["oi_trend"] if "BTC" in selected_symbol.upper() else None
+    dxy_t = fred_data["dxy_trend"] if "XAG" in selected_symbol.upper() or "SILVER" in selected_symbol.upper() else None
+    
+    long_score, long_reasons = calculate_conviction_score(
+        selected_symbol, "LONG", levels['long_plan']['entry'], levels['vwap'], levels['rsi'], bullish_fvg_present,
+        funding_rate=f_rate, oi_trend=oi_t, dxy_trend=dxy_t
+    )
+    
+    # Calculate Bearish (SHORT) conviction
+    short_score, short_reasons = calculate_conviction_score(
+        selected_symbol, "SHORT", levels['short_plan']['entry'], levels['vwap'], levels['rsi'], bearish_fvg_present,
+        funding_rate=f_rate, oi_trend=oi_t, dxy_trend=dxy_t
+    )
+except Exception as e:
+    long_score = 50.0
+    short_score = 50.0
+    long_reasons = [f"Calculation fallback: {e}"]
+    short_reasons = [f"Calculation fallback: {e}"]
+    fred_data = {"dxy_value": 100.0, "dxy_trend": "FLAT"}
+
+long_reasons_html = "".join([f"<li>{r}</li>" for r in long_reasons])
+if not long_reasons_html:
+    long_reasons_html = "<li>No significant directional biases found by the Brain.</li>"
+
+short_reasons_html = "".join([f"<li>{r}</li>" for r in short_reasons])
+if not short_reasons_html:
+    short_reasons_html = "<li>No significant directional biases found by the Brain.</li>"
+
 # Operational Header Metrics
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 m1.markdown(f"<div class='metric-box'><div class='metric-label'>Live Spot</div><div class='metric-val'>${fmt(levels['spot'])}</div><div class='metric-sub'>USDT Perpetual</div></div>", unsafe_allow_html=True)
@@ -187,7 +265,7 @@ m2.markdown(f"<div class='metric-box'><div class='metric-label'>Session VWAP</di
 m3.markdown(f"<div class='metric-box'><div class='metric-label'>Dealing Range</div><div class='metric-val'>${fmt(levels['long_plan']['entry'])} - ${fmt(levels['short_plan']['entry'])}</div><div class='metric-sub'>Discount / Premium</div></div>", unsafe_allow_html=True)
 m4.markdown(f"<div class='metric-box'><div class='metric-label'>ATR Buffer</div><div class='metric-val'>${fmt(levels['atr'])}</div><div class='metric-sub'>14-Period Volatility</div></div>", unsafe_allow_html=True)
 m5.markdown(f"<div class='metric-box'><div class='metric-label'>RSI ({selected_tf})</div><div class='metric-val'>{levels['rsi']}</div><div class='metric-sub'>{'Overbought' if levels['rsi'] > 70 else ('Oversold' if levels['rsi'] < 30 else 'Neutral Flow')}</div></div>", unsafe_allow_html=True)
-m6.markdown(f"<div class='metric-box'><div class='metric-label'>Macro Context</div><div class='metric-val'>{'DXY 98.97' if levels['is_silver'] else 'L2 Delta Flow'}</div><div class='metric-sub'>{'COMEX Sessions' if levels['is_silver'] else 'Crypto Derivatives'}</div></div>", unsafe_allow_html=True)
+m6.markdown(f"<div class='metric-box'><div class='metric-label'>Macro Context</div><div class='metric-val'>{'DXY ' + str(round(fred_data['dxy_value'], 2)) if levels['is_silver'] else 'L2 Delta Flow'}</div><div class='metric-sub'>{'COMEX / ' + fred_data['dxy_trend'] if levels['is_silver'] else 'Crypto Derivatives'}</div></div>", unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -199,9 +277,13 @@ l_plan = levels['long_plan']
 with col_bull:
     st.markdown(f"""
     <div class='playbook-card' style='border-top: 3px solid #089981;'>
-        <div class='bull-title'>🟢 Bullish High-Conviction Anchor</div>
+        <div class='bull-title'>🟢 Bullish High-Conviction Anchor (Brain Score: 🔥 {long_score}%)</div>
         <div class='section-title'>Macro Thesis</div>
         <p style='font-size: 0.88rem; margin-bottom: 8px;'>Institutional accumulation in deep Discount demand at <b>${fmt(l_plan['entry'])}</b> with absorption of sell-side liquidity opens rotation back to Equilibrium and Premium supply.</p>
+        <div class='section-title'>Brain Sentiment &amp; Biases</div>
+        <ul style='font-size: 0.85rem; padding-left: 20px; margin-bottom: 8px;'>
+            {long_reasons_html}
+        </ul>
         <div class='section-title'>Execution Rules</div>
         <ul style='font-size: 0.85rem; padding-left: 20px; margin-bottom: 8px;'>
             <li>Sweep of sell-side liquidity into the Discount Floor at <b>${fmt(l_plan['entry'])}</b>.</li>
@@ -221,9 +303,13 @@ with col_bull:
 with col_bear:
     st.markdown(f"""
     <div class='playbook-card' style='border-top: 3px solid #f23645;'>
-        <div class='bear-title'>🔴 Bearish High-Conviction Anchor</div>
+        <div class='bear-title'>🔴 Bearish High-Conviction Anchor (Brain Score: 🔥 {short_score}%)</div>
         <div class='section-title'>Macro Thesis</div>
         <p style='font-size: 0.88rem; margin-bottom: 8px;'>Exhaustion wick into the overhead Premium Supply block at <b>${fmt(s_plan['entry'])}</b> with failure to accept above POC confirms distribution ready to rotate lower.</p>
+        <div class='section-title'>Brain Sentiment &amp; Biases</div>
+        <ul style='font-size: 0.85rem; padding-left: 20px; margin-bottom: 8px;'>
+            {short_reasons_html}
+        </ul>
         <div class='section-title'>Execution Rules</div>
         <ul style='font-size: 0.85rem; padding-left: 20px; margin-bottom: 8px;'>
             <li>Sweep of buy-side liquidity into Premium Supply at <b>${fmt(s_plan['entry'])}</b>.</li>
