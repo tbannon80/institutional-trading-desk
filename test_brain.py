@@ -3,6 +3,7 @@ import os
 import sqlite3
 import sys
 import pandas as pd
+import numpy as np
 
 # Ensure repo folder is in sys.path
 sys.path.append(os.path.dirname(__file__))
@@ -177,6 +178,39 @@ class TestTradingBrain(unittest.TestCase):
             self.assertNotIn(s["symbol"], ["ETH/USDT", "SOL/USDT", "XRP/USDT"])
             
         print("✅ Passed: Database and active tracking strictly locked to dual-asset scope.")
+
+    def test_telegram_watcher_and_brain_scorer_integration(self):
+        import smc_engine
+        dates = pd.date_range("2026-08-23 08:00", periods=60, freq="15min")
+        base = 77000.0
+        close = base + np.cumsum(np.random.randn(60) * 30)
+        df = pd.DataFrame({
+            'timestamp': [int(d.timestamp()) for d in dates],
+            'datetime': dates,
+            'open': close - 15,
+            'high': close + 35,
+            'low': close - 35,
+            'close': close,
+            'volume': np.random.uniform(500, 2000, 60)
+        })
+        df = smc_engine.calculate_clean_indicators(df)
+        spot = float(df['close'].iloc[-1])
+        levels = smc_engine.get_structural_levels(df, "BTC/USDT", spot)
+        
+        lp = levels['long_plan']
+        score, reasons = calculate_conviction_score(
+            "BTC/USDT", "LONG", lp['entry'], levels['vwap'], levels['rsi'], True, htf_regime="BULLISH"
+        )
+        self.assertGreaterEqual(score, 50.0)
+        self.assertIsInstance(reasons, list)
+        
+        setup_id = save_setup(
+            "TESTBTC", "LONG", spot, lp['entry'], lp['sl'], lp['tp2'],
+            levels['atr'], levels['rsi'], levels['vwap'], tp1_price=lp['tp1'], tp2_price=lp['tp2'],
+            entry_order_type=levels['entry_order_type'], htf_regime="BULLISH", conviction_score=score
+        )
+        self.assertIsNotNone(setup_id)
+        print("✅ Passed: Smoke test on brain_scorer and telegram_watcher integration verified.")
 
 if __name__ == "__main__":
     unittest.main()
