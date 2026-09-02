@@ -57,15 +57,19 @@ def init_db():
     )
     """)
     
-    # Check for existing table column migrations
-    existing_cols = {row["name"] for row in cursor.execute("PRAGMA table_info(setups);").fetchall()}
+    # Check for existing table column migrations (table_xinfo includes virtual generated columns)
+    existing_cols = {row["name"] for row in cursor.execute("PRAGMA table_xinfo(setups);").fetchall()}
     migrations = [
         ("entry_order_type", "TEXT DEFAULT 'LIMIT'"),
         ("tp1_price", "REAL DEFAULT 0.0"),
         ("tp2_price", "REAL DEFAULT 0.0"),
         ("be_price", "REAL"),
         ("tp1_hit", "INTEGER DEFAULT 0"),
-        ("htf_regime", "TEXT DEFAULT 'NEUTRAL'")
+        ("htf_regime", "TEXT DEFAULT 'NEUTRAL'"),
+        ("id", "INTEGER GENERATED ALWAYS AS (setup_id)"),
+        ("side", "TEXT GENERATED ALWAYS AS (setup_type)"),
+        ("tp1_target", "REAL GENERATED ALWAYS AS (tp1_price)"),
+        ("tp2_target", "REAL GENERATED ALWAYS AS (tp2_price)")
     ]
     for col_name, col_type in migrations:
         if col_name not in existing_cols:
