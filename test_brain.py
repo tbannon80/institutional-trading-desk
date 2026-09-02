@@ -20,6 +20,14 @@ class TestTradingBrain(unittest.TestCase):
         cls.db_path = get_db_path()
         init_db()
 
+    @classmethod
+    def tearDownClass(cls):
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute("DELETE FROM setups WHERE symbol LIKE 'TEST%'")
+        conn.commit()
+        conn.close()
+
     def test_sqlite_wal_mode(self):
         conn = get_connection()
         cursor = conn.cursor()

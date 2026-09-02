@@ -3,7 +3,7 @@ import sqlite3
 def check_setup_states():
     conn = sqlite3.connect('data/trading.db')
     cursor = conn.cursor()
-    cursor.execute("SELECT id, symbol, side, entry_price, tp1_target, tp2_target, status FROM setups WHERE status != 'CLOSED'")
+    cursor.execute("SELECT id, symbol, side, entry_price, tp1_target, tp2_target, status FROM setups WHERE status != 'CLOSED' AND symbol NOT LIKE 'TEST%'")
     rows = cursor.fetchall()
     print(f"[*] Active Setups Tracking Count: {len(rows)}")
     for row in rows:
