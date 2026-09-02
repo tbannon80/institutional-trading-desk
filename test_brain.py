@@ -182,7 +182,7 @@ class TestTradingBrain(unittest.TestCase):
         # Verify active setups only contain BTC, SILVER, or test symbols
         active = get_active_setups()
         for s in active:
-            self.assertIn(s["symbol"], ["BTC/USDT", "SILVER/USDT", "TESTBTC"])
+            self.assertIn(s["symbol"], ["BTC/USDT", "SILVER/USDT", "BTCUSDT", "SILVERUSDT", "TESTBTC"])
             self.assertNotIn(s["symbol"], ["ETH/USDT", "SOL/USDT", "XRP/USDT"])
             
         print("✅ Passed: Database and active tracking strictly locked to dual-asset scope.")

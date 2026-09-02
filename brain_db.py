@@ -79,7 +79,7 @@ def init_db():
     # Purge legacy non-scoped assets from tracking and records
     cursor.execute("""
         DELETE FROM setups
-        WHERE symbol NOT IN ('BTC/USDT', 'SILVER/USDT', 'TESTBTC')
+        WHERE symbol NOT IN ('BTC/USDT', 'SILVER/USDT', 'BTCUSDT', 'SILVERUSDT', 'TESTBTC')
     """)
     
     # 2. Create settings table
