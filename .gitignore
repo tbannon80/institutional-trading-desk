@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.db
+alert_state.json
+.env
+.venv/
