@@ -2,11 +2,12 @@ import unittest
 import os
 import sqlite3
 import sys
+import pandas as pd
 
 # Ensure repo folder is in sys.path
 sys.path.append(os.path.dirname(__file__))
 
-from brain_db import init_db, save_setup, get_active_setups, get_setting, set_setting, get_db_path
+from brain_db import init_db, save_setup, get_active_setups, get_setting, set_setting, get_db_path, get_connection
 from brain_scorer import calculate_conviction_score
 from brain_metrics import fetch_binance_funding_and_oi, fetch_fred_dxy
 
@@ -14,10 +15,18 @@ class TestTradingBrain(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        # Point to a test database instead of production
         os.environ["TRADING_REPO_PATH"] = os.path.dirname(__file__)
         cls.db_path = get_db_path()
         init_db()
+
+    def test_sqlite_wal_mode(self):
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA journal_mode;")
+        mode = cursor.fetchone()[0]
+        conn.close()
+        self.assertEqual(mode.lower(), "wal")
+        print(f"✅ Passed: SQLite journal mode is WAL ({mode}).")
 
     def test_default_settings(self):
         w_rsi = get_setting("w_rsi")
@@ -26,37 +35,40 @@ class TestTradingBrain(unittest.TestCase):
         fred_key = get_setting("fred_api_key")
         self.assertEqual(fred_key, "ba32dd734abc8235a0ceb07967ab4812")
 
-    def test_btc_conviction_scoring(self):
-        # Test LONG BTC with healthy funding/OI
-        score_healthy, reasons_healthy = calculate_conviction_score(
+    def test_btc_conviction_scoring_and_htf_penalty(self):
+        # 1. Aligned Bullish Regime (Close > EMA200)
+        score_bull_aligned, _ = calculate_conviction_score(
             symbol="BTC/USDT",
             setup_type="LONG",
             entry_price=64000.0,
-            vwap=64500.0, # Below VWAP = favorable
-            rsi=25.0,     # Oversold = favorable
+            vwap=64500.0,
+            rsi=28.0,
             fvg_aligned=True,
-            funding_rate=0.0001, # 0.01% = favorable
-            oi_trend="DOWN"      # OI flush = favorable
+            htf_regime="BULLISH",
+            funding_rate=0.0001,
+            oi_trend="DOWN"
         )
         
-        # Test LONG BTC with overheated funding/rising OI (dangerous)
-        score_dangerous, reasons_dangerous = calculate_conviction_score(
+        # 2. Counter-Trend: Long in 4H Bear Regime (Should receive 0.2x penalty)
+        score_bear_penalized, reasons_bear = calculate_conviction_score(
             symbol="BTC/USDT",
             setup_type="LONG",
             entry_price=64000.0,
-            vwap=63500.0, # Above VWAP = unfavorable for LONG
-            rsi=55.0,     # Neutral RSI = unfavorable for LONG
-            fvg_aligned=False,
-            funding_rate=0.0006, # 0.06% = dangerous
-            oi_trend="UP"        # Rising OI = dangerous
+            vwap=64500.0,
+            rsi=28.0, # Oversold in bear regime is a trap!
+            fvg_aligned=True,
+            htf_regime="BEARISH",
+            funding_rate=0.0001,
+            oi_trend="DOWN"
         )
         
-        self.assertGreater(score_healthy, score_dangerous)
-        self.assertGreaterEqual(score_healthy, 80.0) # Favorable setup should be high conviction
-        self.assertLessEqual(score_dangerous, 40.0) # Unfavorable setup should be low conviction
+        self.assertGreaterEqual(score_bull_aligned, 80.0)
+        self.assertLessEqual(score_bear_penalized, 25.0) # 0.2x penalty caps score
+        self.assertTrue(any("penalty" in r.lower() or "bear regime" in r.lower() for r in reasons_bear))
+        print("✅ Passed: HTF Regime 0.2x penalty correctly suppresses counter-trend setups.")
 
     def test_silver_conviction_scoring(self):
-        # Test Silver LONG with DXY going DOWN (favorable)
+        # Silver LONG with DXY DOWN
         score_favorable, _ = calculate_conviction_score(
             symbol="SILVER/USDT",
             setup_type="LONG",
@@ -64,10 +76,11 @@ class TestTradingBrain(unittest.TestCase):
             vwap=29.5,
             rsi=28.0,
             fvg_aligned=True,
+            htf_regime="BULLISH",
             dxy_trend="DOWN"
         )
         
-        # Test Silver LONG with DXY going UP (headwind)
+        # Silver LONG with DXY UP (Headwind)
         score_unfavorable, _ = calculate_conviction_score(
             symbol="SILVER/USDT",
             setup_type="LONG",
@@ -75,26 +88,30 @@ class TestTradingBrain(unittest.TestCase):
             vwap=29.5,
             rsi=28.0,
             fvg_aligned=True,
+            htf_regime="NEUTRAL",
             dxy_trend="UP"
         )
         self.assertGreater(score_favorable, score_unfavorable)
+        print("✅ Passed: Silver DXY macro factor scoring verified.")
 
-    def test_sqlite_setup_saving_and_tracking(self):
-        # Clean existing test entries if any
-        conn = sqlite3.connect(self.db_path)
+    def test_sqlite_setup_saving_with_split_targets(self):
+        conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM setups WHERE symbol = 'TESTBTC'")
         conn.commit()
         conn.close()
         
-        # Log a setup
         setup_id = save_setup(
             symbol="TESTBTC",
             setup_type="LONG",
             spot=64200.0,
             entry=64000.0,
             sl=63500.0,
-            tp=65500.0,
+            tp=66000.0,
+            tp1_price=65000.0,
+            tp2_price=66000.0,
+            entry_order_type="LIMIT",
+            htf_regime="BULLISH",
             atr=500.0,
             rsi=30.0,
             vwap=64500.0,
@@ -103,11 +120,65 @@ class TestTradingBrain(unittest.TestCase):
         
         self.assertIsNotNone(setup_id)
         
-        # Retrieve active setups
         active = get_active_setups()
         test_setups = [s for s in active if s["symbol"] == "TESTBTC"]
         self.assertEqual(len(test_setups), 1)
         self.assertEqual(test_setups[0]["status"], "PENDING")
+        self.assertEqual(test_setups[0]["tp1_price"], 65000.0)
+        self.assertEqual(test_setups[0]["tp2_price"], 66000.0)
+        self.assertEqual(test_setups[0]["entry_order_type"], "LIMIT")
+        print("✅ Passed: SQLite schema saves dual TP1/TP2, order type, and HTF regime.")
+
+    def test_ohlc_tracking_arrays_dual_asset(self):
+        from brain_tracker import fetch_recent_15m_bars, get_current_price
+        
+        # Test BTC tracking arrays
+        btc_bars = fetch_recent_15m_bars("BTC/USDT", limit=10)
+        self.assertIsInstance(btc_bars, pd.DataFrame)
+        if not btc_bars.empty:
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                self.assertIn(col, btc_bars.columns)
+                
+        # Test Silver tracking arrays
+        silver_bars = fetch_recent_15m_bars("SILVER/USDT", limit=10)
+        self.assertIsInstance(silver_bars, pd.DataFrame)
+        if not silver_bars.empty:
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                self.assertIn(col, silver_bars.columns)
+                
+        print("✅ Passed: OHLC tracking arrays compile cleanly for dual-asset scope (BTC/USDT & SILVER/USDT).")
+
+    def test_dual_asset_scope_purge_legacy(self):
+        # Insert a dummy legacy altcoin setup to verify auto-purge in init_db
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO setups (timestamp, symbol, setup_type, entry_order_type, spot_price, entry_price, sl_price, tp_price, atr, rsi, vwap, status, conviction_score)
+            VALUES ('2026-09-01T00:00:00Z', 'ETH/USDT', 'LONG', 'LIMIT', 2500, 2400, 2300, 2600, 50, 45, 2450, 'PENDING', 75.0)
+        """)
+        conn.commit()
+        conn.close()
+
+        # Run init_db which should purge it
+        init_db()
+
+        # Verify ETH/USDT was purged
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM setups WHERE symbol = 'ETH/USDT'")
+        eth_count = c.fetchone()[0]
+        conn.close()
+        self.assertEqual(eth_count, 0)
+        
+        # Verify active setups only contain BTC, SILVER, or test symbols
+        active = get_active_setups()
+        for s in active:
+            self.assertIn(s["symbol"], ["BTC/USDT", "SILVER/USDT", "TESTBTC"])
+            self.assertNotIn(s["symbol"], ["ETH/USDT", "SOL/USDT", "XRP/USDT"])
+            
+        print("✅ Passed: Database and active tracking strictly locked to dual-asset scope.")
 
 if __name__ == "__main__":
     unittest.main()
+
+

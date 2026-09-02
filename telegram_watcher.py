@@ -1,6 +1,6 @@
 """
 telegram_watcher.py - 24/7 Autonomous Market Structure Watcher
-Watches 24/7 crypto pairs + CME-hours silver with multi-exchange public feeds.
+Strictly scoped to BTCUSDT & SILVERUSDT with Market Structure Invalidation (MSI) and HTF Regime Filtering.
 """
 import os
 import json
@@ -8,7 +8,10 @@ import time
 import requests
 import pandas as pd
 from datetime import datetime, timezone
-from smc_engine import calculate_clean_indicators, get_structural_levels
+from smc_engine import (
+    calculate_clean_indicators, get_structural_levels, 
+    validate_candle_data, fetch_htf_regime, is_silver_market_open
+)
 from brain_db import init_db, save_setup, get_setting
 from brain_metrics import fetch_binance_funding_and_oi, fetch_fred_dxy
 from brain_scorer import calculate_conviction_score
@@ -17,27 +20,11 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "8989112896")
 STATE_FILE = os.path.join(os.path.dirname(__file__), "alert_state.json")
 
+# Strict Asset Scoping: BTCUSDT and SILVERUSDT only
 WATCHLIST = [
     {"symbol": "BTC/USDT", "coinbase_pair": "BTC-USD", "kraken_pair": "XBTUSD", "fsym": "BTC", "is_silver": False},
-    {"symbol": "ETH/USDT", "coinbase_pair": "ETH-USD", "kraken_pair": "ETHUSD", "fsym": "ETH", "is_silver": False},
-    {"symbol": "SOL/USDT", "coinbase_pair": "SOL-USD", "kraken_pair": "SOLUSD", "fsym": "SOL", "is_silver": False},
-    {"symbol": "XRP/USDT", "coinbase_pair": "XRP-USD", "kraken_pair": "XRPUSD", "fsym": "XRP", "is_silver": False},
     {"symbol": "SILVER/USDT", "coinbase_pair": None, "kraken_pair": None, "fsym": "XAG", "is_silver": True}
 ]
-
-def is_silver_market_open():
-    """COMEX Silver: Sunday 5:00 PM CT (22:00 UTC) through Friday 4:00 PM CT (21:00 UTC)"""
-    now = datetime.now(timezone.utc)
-    weekday = now.weekday() # Monday = 0, Friday = 4, Saturday = 5, Sunday = 6
-    hour = now.hour
-
-    if weekday == 5: # Saturday (Closed all day)
-        return False
-    if weekday == 6 and hour < 22: # Sunday before 5 PM CT / 22:00 UTC
-        return False
-    if weekday == 4 and hour >= 21: # Friday after 4 PM CT / 21:00 UTC
-        return False
-    return True
 
 def load_alert_state():
     if os.path.exists(STATE_FILE):
@@ -79,7 +66,7 @@ def fetch_klines_and_spot(asset):
 
     if asset["is_silver"]:
         if not is_silver_market_open():
-            return None, -1.0 # Signal market closed
+            return None, -1.0 # Signal COMEX market closed
         try:
             url = "https://query1.finance.yahoo.com/v8/finance/chart/SI=F?interval=15m&range=2d"
             r = requests.get(url, headers=headers, timeout=5).json()
@@ -134,6 +121,12 @@ def fetch_klines_and_spot(asset):
                 pass
 
     if df is not None and not df.empty and spot > 0:
+        # Upstream Data Validation
+        is_valid, validation_msg = validate_candle_data(df, asset["is_silver"])
+        if not is_valid:
+            print(f"[{asset['symbol']}] ⚠️ Upstream Data Validation Failed: {validation_msg}")
+            return None, 0.0
+
         df = calculate_clean_indicators(df)
         return df, spot
 
@@ -141,17 +134,16 @@ def fetch_klines_and_spot(asset):
 
 def run_watcher():
     print(f"🚀 Running Multi-Asset Market Watcher at {datetime.now(timezone.utc).isoformat()}...")
-    init_db() # Ensure the SQLite database is initialized
+    init_db()
     state = load_alert_state()
     now_ts = time.time()
     COOLDOWN_SECS = 3 * 3600
 
     # 1. Fetch pre-requisite macro/external data
-    # Fetch FRED DXY proxy
     fred_key = get_setting("fred_api_key")
     fred_data = fetch_fred_dxy(fred_key) if fred_key else {"dxy_value": 100.0, "dxy_trend": "FLAT", "dxy_sma_5d": 100.0}
     
-    # Fetch Binance BTC metrics
+    # Binance BTC funding and OI metrics
     btc_metrics = fetch_binance_funding_and_oi("BTCUSDT")
 
     for asset in WATCHLIST:
@@ -165,9 +157,14 @@ def run_watcher():
                 continue
 
             if df is None or spot <= 0.0:
-                print(f"⚠️ Could not fetch market data for {sym}")
+                print(f"⚠️ Could not fetch valid market data for {sym}")
                 continue
 
+            # Fetch HTF Macro Regime (4H EMA50 / EMA200)
+            htf_info = fetch_htf_regime(sym)
+            htf_regime = htf_info.get("htf_regime", "NEUTRAL")
+
+            # Calculate Structural SMC Levels with Market Structure Invalidation (MSI)
             levels = get_structural_levels(df, sym, spot)
             s_plan = levels['short_plan']
             l_plan = levels['long_plan']
@@ -175,14 +172,14 @@ def run_watcher():
             dec = levels['decimals']
             vwap = levels['vwap']
             rsi = levels['rsi']
+            order_type = levels['entry_order_type']
 
             dist_to_short = s_plan['entry'] - spot
             dist_to_long = spot - l_plan['entry']
             threshold = 0.8 * atr
 
-            print(f"[{sym:11}] Spot: ${spot:<10.{dec}f} | Supply: ${s_plan['entry']:<10.{dec}f} (Δ ${dist_to_short:<7.{dec}f}) | Demand: ${l_plan['entry']:<10.{dec}f} (Δ ${dist_to_long:<7.{dec}f}) | RSI: {rsi:<4} | VWAP: ${vwap:.{dec}f}")
+            print(f"[{sym:11}] Spot: ${spot:<10.{dec}f} | Supply: ${s_plan['entry']:<10.{dec}f} (Δ ${dist_to_short:<7.{dec}f}) | Demand: ${l_plan['entry']:<10.{dec}f} (Δ ${dist_to_long:<7.{dec}f}) | 4H HTF: {htf_regime:<7} | RSI: {rsi:<4} | VWAP: ${vwap:.{dec}f}")
 
-            # FVG alignments in last 5 candles
             bullish_fvg_present = any(df['bullish_fvg'].iloc[-5:]) if 'bullish_fvg' in df.columns else False
             bearish_fvg_present = any(df['bearish_fvg'].iloc[-5:]) if 'bearish_fvg' in df.columns else False
 
@@ -190,34 +187,38 @@ def run_watcher():
             if 0 <= dist_to_short <= threshold:
                 zone_key = f"{sym}_SHORT"
                 if now_ts - state.get(zone_key, 0) > COOLDOWN_SECS:
-                    # Gather setup specific metrics
                     f_rate = btc_metrics["funding_rate"] if "BTC" in sym.upper() else None
                     oi_t = btc_metrics["oi_trend"] if "BTC" in sym.upper() else None
                     dxy_t = fred_data["dxy_trend"] if "SILVER" in sym.upper() or "XAG" in sym.upper() else None
                     
                     score, reasons = calculate_conviction_score(
                         sym, "SHORT", s_plan['entry'], vwap, rsi, bearish_fvg_present,
-                        funding_rate=f_rate, oi_trend=oi_t, dxy_trend=dxy_t
+                        htf_regime=htf_regime, funding_rate=f_rate, oi_trend=oi_t, dxy_trend=dxy_t
                     )
                     
-                    # Log to database
+                    # Log setup to database
                     save_setup(
-                        sym, "SHORT", spot, s_plan['entry'], s_plan['sl'], s_plan['tp'],
-                        atr, rsi, vwap, funding_rate=f_rate, open_interest=btc_metrics["current_oi"] if "BTC" in sym.upper() else None,
+                        sym, "SHORT", spot, s_plan['entry'], s_plan['sl'], s_plan['tp2'],
+                        atr, rsi, vwap, tp1_price=s_plan['tp1'], tp2_price=s_plan['tp2'],
+                        entry_order_type=order_type, htf_regime=htf_regime,
+                        funding_rate=f_rate, open_interest=btc_metrics["current_oi"] if "BTC" in sym.upper() else None,
                         dxy_index=fred_data["dxy_value"] if "SILVER" in sym.upper() or "XAG" in sym.upper() else None,
                         conviction_score=score
                     )
                     
-                    reasons_str = "\n".join([f"▫️ *Brain Sentiment:* {r}" for r in reasons])
+                    reasons_str = "\n".join([f"▫️ {r}" for r in reasons])
                     if reasons_str:
                         reasons_str = f"\n{reasons_str}\n"
                     
                     msg = (
-                        f"🚨 *TRADE ALERT: {sym} Approaching Supply Ceiling*\n\n"
+                        f"🚨 *TRADE ALERT: {sym} Approaching Supply Invalidation*\n\n"
+                        f"▫️ *Order Type:* `{order_type}`\n"
                         f"▫️ *Spot Price:* `${spot:.{dec}f}`\n"
                         f"▫️ *Supply Entry:* `${s_plan['entry']:.{dec}f}` (Within `${dist_to_short:.{dec}f}`)\n"
-                        f"▫️ *Invalidation (SL):* `${s_plan['sl']:.{dec}f}`\n"
-                        f"▫️ *Target (TP):* `${s_plan['tp']:.{dec}f}`\n"
+                        f"▫️ *Invalidation (MSI SL):* `${s_plan['sl']:.{dec}f}` (Above Wick + 0.15 ATR)\n"
+                        f"▫️ *Target TP1 (50% Close + BE):* `${s_plan['tp1']:.{dec}f}`\n"
+                        f"▫️ *Target TP2 (Runner):* `${s_plan['tp2']:.{dec}f}`\n"
+                        f"▫️ *4H Macro Regime:* `{htf_regime}`\n"
                         f"▫️ *Wilder RSI:* `{rsi}` | *Session VWAP:* `${vwap:.{dec}f}`\n"
                         f"▫️ *Conviction Score:* `🔥 {score}%`\n"
                         f"{reasons_str}\n"
@@ -230,34 +231,38 @@ def run_watcher():
             if 0 <= dist_to_long <= threshold:
                 zone_key = f"{sym}_LONG"
                 if now_ts - state.get(zone_key, 0) > COOLDOWN_SECS:
-                    # Gather setup specific metrics
                     f_rate = btc_metrics["funding_rate"] if "BTC" in sym.upper() else None
                     oi_t = btc_metrics["oi_trend"] if "BTC" in sym.upper() else None
                     dxy_t = fred_data["dxy_trend"] if "SILVER" in sym.upper() or "XAG" in sym.upper() else None
                     
                     score, reasons = calculate_conviction_score(
                         sym, "LONG", l_plan['entry'], vwap, rsi, bullish_fvg_present,
-                        funding_rate=f_rate, oi_trend=oi_t, dxy_trend=dxy_t
+                        htf_regime=htf_regime, funding_rate=f_rate, oi_trend=oi_t, dxy_trend=dxy_t
                     )
                     
-                    # Log to database
+                    # Log setup to database
                     save_setup(
-                        sym, "LONG", spot, l_plan['entry'], l_plan['sl'], l_plan['tp'],
-                        atr, rsi, vwap, funding_rate=f_rate, open_interest=btc_metrics["current_oi"] if "BTC" in sym.upper() else None,
+                        sym, "LONG", spot, l_plan['entry'], l_plan['sl'], l_plan['tp2'],
+                        atr, rsi, vwap, tp1_price=l_plan['tp1'], tp2_price=l_plan['tp2'],
+                        entry_order_type=order_type, htf_regime=htf_regime,
+                        funding_rate=f_rate, open_interest=btc_metrics["current_oi"] if "BTC" in sym.upper() else None,
                         dxy_index=fred_data["dxy_value"] if "SILVER" in sym.upper() or "XAG" in sym.upper() else None,
                         conviction_score=score
                     )
                     
-                    reasons_str = "\n".join([f"▫️ *Brain Sentiment:* {r}" for r in reasons])
+                    reasons_str = "\n".join([f"▫️ {r}" for r in reasons])
                     if reasons_str:
                         reasons_str = f"\n{reasons_str}\n"
                     
                     msg = (
-                        f"🚨 *TRADE ALERT: {sym} Approaching Demand Floor*\n\n"
+                        f"🚨 *TRADE ALERT: {sym} Approaching Demand Invalidation*\n\n"
+                        f"▫️ *Order Type:* `{order_type}`\n"
                         f"▫️ *Spot Price:* `${spot:.{dec}f}`\n"
                         f"▫️ *Demand Entry:* `${l_plan['entry']:.{dec}f}` (Within `${dist_to_long:.{dec}f}`)\n"
-                        f"▫️ *Invalidation (SL):* `${l_plan['sl']:.{dec}f}`\n"
-                        f"▫️ *Target (TP):* `${l_plan['tp']:.{dec}f}`\n"
+                        f"▫️ *Invalidation (MSI SL):* `${l_plan['sl']:.{dec}f}` (Below Wick - 0.15 ATR)\n"
+                        f"▫️ *Target TP1 (50% Close + BE):* `${l_plan['tp1']:.{dec}f}`\n"
+                        f"▫️ *Target TP2 (Runner):* `${l_plan['tp2']:.{dec}f}`\n"
+                        f"▫️ *4H Macro Regime:* `{htf_regime}`\n"
                         f"▫️ *Wilder RSI:* `{rsi}` | *Session VWAP:* `${vwap:.{dec}f}`\n"
                         f"▫️ *Conviction Score:* `🔥 {score}%`\n"
                         f"{reasons_str}\n"
@@ -274,3 +279,4 @@ def run_watcher():
 
 if __name__ == "__main__":
     run_watcher()
+
