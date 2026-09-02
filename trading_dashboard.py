@@ -206,23 +206,55 @@ def fmt(val):
     if dec == 3: return f"{val:,.3f}"
     return f"{val:,.1f}"
 
-# Fetch Brain Conviction Scores and Sentiment
+# Fetch Brain Conviction Scores and Sentiment (Safe Pre-Initialization)
+fred_data = {
+    "dxy_value": 100.0,
+    "dxy_trend": "FLAT",
+    "dxy_sma_5d": 100.0
+}
+btc_metrics = {
+    "funding_rate": 0.0,
+    "current_oi": 0.0,
+    "oi_trend": "FLAT"
+}
+long_score = 50.0
+short_score = 50.0
+long_reasons = []
+short_reasons = []
+
 try:
     from brain_db import get_setting
     from brain_metrics import fetch_binance_funding_and_oi, fetch_fred_dxy
     from brain_scorer import calculate_conviction_score
     
-    fred_key = get_setting("fred_api_key")
-    fred_data = fetch_fred_dxy(fred_key) if fred_key else {"dxy_value": 100.0, "dxy_trend": "FLAT", "dxy_sma_5d": 100.0}
-    btc_metrics = fetch_binance_funding_and_oi("BTCUSDT")
+    # Safe FRED DXY retrieval
+    try:
+        fred_key = get_setting("fred_api_key")
+        if fred_key:
+            res_fred = fetch_fred_dxy(fred_key)
+            if isinstance(res_fred, dict):
+                fred_data.update(res_fred)
+    except Exception as e_fred:
+        print(f"FRED fetch fallback: {e_fred}")
+
+    # Safe Binance Funding/OI retrieval
+    try:
+        res_btc = fetch_binance_funding_and_oi("BTCUSDT")
+        if isinstance(res_btc, dict):
+            btc_metrics.update(res_btc)
+    except Exception as e_btc:
+        print(f"Binance metrics fetch fallback: {e_btc}")
     
     bullish_fvg_present = any(df['bullish_fvg'].iloc[-5:]) if 'bullish_fvg' in df.columns else False
     bearish_fvg_present = any(df['bearish_fvg'].iloc[-5:]) if 'bearish_fvg' in df.columns else False
     
     # Calculate Bullish (LONG) conviction
-    f_rate = btc_metrics["funding_rate"] if "BTC" in selected_symbol.upper() else None
-    oi_t = btc_metrics["oi_trend"] if "BTC" in selected_symbol.upper() else None
-    dxy_t = fred_data["dxy_trend"] if "XAG" in selected_symbol.upper() or "SILVER" in selected_symbol.upper() else None
+    is_btc = "BTC" in selected_symbol.upper()
+    is_silver_sym = "XAG" in selected_symbol.upper() or "SILVER" in selected_symbol.upper()
+
+    f_rate = btc_metrics.get("funding_rate", 0.0) if is_btc else None
+    oi_t = btc_metrics.get("oi_trend", "FLAT") if is_btc else None
+    dxy_t = fred_data.get("dxy_trend", "FLAT") if is_silver_sym else None
     
     long_score, long_reasons = calculate_conviction_score(
         selected_symbol, "LONG", levels['long_plan']['entry'], levels['vwap'], levels['rsi'], bullish_fvg_present,
@@ -239,7 +271,6 @@ except Exception as e:
     short_score = 50.0
     long_reasons = [f"Calculation fallback: {e}"]
     short_reasons = [f"Calculation fallback: {e}"]
-    fred_data = {"dxy_value": 100.0, "dxy_trend": "FLAT"}
 
 long_reasons_html = "".join([f"<li>{r}</li>" for r in long_reasons])
 if not long_reasons_html:
@@ -256,8 +287,24 @@ m2.markdown(f"<div class='metric-box'><div class='metric-label'>Session VWAP</di
 m3.markdown(f"<div class='metric-box'><div class='metric-label'>Dealing Range</div><div class='metric-val'>${fmt(levels['long_plan']['entry'])} - ${fmt(levels['short_plan']['entry'])}</div><div class='metric-sub'>Discount / Premium</div></div>", unsafe_allow_html=True)
 m4.markdown(f"<div class='metric-box'><div class='metric-label'>ATR (14)</div><div class='metric-val'>${fmt(levels['atr'])}</div><div class='metric-sub'>Volatility Buffer</div></div>", unsafe_allow_html=True)
 m5.markdown(f"<div class='metric-box'><div class='metric-label'>4H Macro Regime</div><div class='metric-val'>{htf_regime}</div><div class='metric-sub'>EMA50 / EMA200</div></div>", unsafe_allow_html=True)
-macro_val = f"DXY {round(fred_data['dxy_value'], 2)}" if levels['is_silver'] else f"Funding {btc_metrics.get('funding_rate', 0)*100:.3f}%"
-macro_sub = f"FRED Trend: {fred_data['dxy_trend']}" if levels['is_silver'] else "Binance OI Flow"
+
+# Defensive extraction of Macro Factor values for DXY and Funding Rate
+if levels.get('is_silver', False):
+    try:
+        raw_dxy = float(fred_data.get('dxy_value', 100.0) or 100.0)
+    except (ValueError, TypeError):
+        raw_dxy = 100.0
+    dxy_trend_label = str(fred_data.get('dxy_trend', 'FLAT') or 'FLAT')
+    macro_val = f"DXY {raw_dxy:.2f}"
+    macro_sub = f"FRED Trend: {dxy_trend_label}"
+else:
+    try:
+        raw_fund = float(btc_metrics.get('funding_rate', 0.0) or 0.0)
+    except (ValueError, TypeError):
+        raw_fund = 0.0
+    macro_val = f"Funding {raw_fund * 100:.3f}%"
+    macro_sub = "Binance OI Flow"
+
 m6.markdown(f"<div class='metric-box'><div class='metric-label'>Macro Factor</div><div class='metric-val'>{macro_val}</div><div class='metric-sub'>{macro_sub}</div></div>", unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
